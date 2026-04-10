@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-lattice-50: #f0f7ff;
+  --color-lattice-100: #e0efff;
+  --color-lattice-200: #b9dfff;
+  --color-lattice-300: #7cc4ff;
+  --color-lattice-400: #36a5ff;
+  --color-lattice-500: #0c87f2;
+  --color-lattice-600: #0068cf;
+  --color-lattice-700: #0053a8;
+  --color-lattice-800: #05478a;
+  --color-lattice-900: #0a3c72;
+  --color-lattice-950: #07264b;
+}
+
+body {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 3px;
+}
