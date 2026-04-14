@@ -1,12 +1,12 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { LayoutDashboard, Search, Wallet, ArrowLeftRight, Server, Settings, Circle } from 'lucide-react'
+import { LayoutDashboard, Search, Wallet, ArrowLeftRight, Server, Settings, Pickaxe, Activity } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/explorer', icon: Search, label: 'Explorer' },
   { to: '/wallet', icon: Wallet, label: 'Wallet' },
-  { to: '/trading', icon: ArrowLeftRight, label: 'Trading' },
+  { to: '/trading', icon: ArrowLeftRight, label: 'Exchange' },
   { to: '/node', icon: Server, label: 'Node' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
@@ -15,17 +15,15 @@ export function Layout() {
   const { connected, chains, selectedChain, setSelectedChain } = useNode()
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden bg-zinc-950">
       {/* Sidebar */}
-      <aside className="w-56 flex-shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col">
-        <div className="p-4 border-b border-zinc-800">
-          <h1 className="text-lg font-bold tracking-tight text-lattice-400">Lattice</h1>
-          <div className="flex items-center gap-1.5 mt-1 text-xs">
-            <Circle
-              size={8}
-              className={connected ? 'fill-emerald-400 text-emerald-400' : 'fill-red-400 text-red-400'}
-            />
-            <span className="text-zinc-400">
+      <aside className="w-52 flex-shrink-0 bg-zinc-950 border-r border-zinc-800/60 flex flex-col">
+        {/* Logo */}
+        <div className="px-5 pt-6 pb-4">
+          <h1 className="text-lg font-bold tracking-tight text-white">Lattice</h1>
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-emerald-400' : 'bg-red-400'}`} />
+            <span className="text-[11px] text-zinc-500">
               {connected ? 'Connected' : 'Disconnected'}
             </span>
           </div>
@@ -33,31 +31,42 @@ export function Layout() {
 
         {/* Chain selector */}
         {chains.length > 0 && (
-          <div className="px-3 py-2 border-b border-zinc-800">
-            <label className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1 block">Chain</label>
-            <select
-              value={selectedChain}
-              onChange={e => setSelectedChain(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-zinc-200 focus:outline-none focus:border-lattice-500"
-            >
+          <div className="px-3 pb-3">
+            <div className="space-y-0.5">
               {chains.map(c => (
-                <option key={c.directory} value={c.directory}>{c.directory}</option>
+                <button
+                  key={c.directory}
+                  onClick={() => setSelectedChain(c.directory)}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs transition-colors ${
+                    selectedChain === c.directory
+                      ? 'bg-lattice-600/10 text-lattice-400'
+                      : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    {c.mining && <Pickaxe size={10} className="text-emerald-400" />}
+                    {c.syncing && <Activity size={10} className="text-yellow-400" />}
+                    <span className="font-medium">{c.directory}</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-600 tabular-nums">#{c.height}</span>
+                </button>
               ))}
-            </select>
+            </div>
           </div>
         )}
 
-        <nav className="flex-1 p-2 space-y-0.5">
+        {/* Nav */}
+        <nav className="flex-1 px-3 pt-2 space-y-0.5">
           {nav.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
               className={({ isActive }) =>
-                `flex items-center gap-2.5 px-3 py-2 rounded text-sm transition-colors ${
+                `flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${
                   isActive
-                    ? 'bg-lattice-600/20 text-lattice-400'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
+                    ? 'bg-zinc-800/80 text-white'
+                    : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'
                 }`
               }
             >
@@ -66,22 +75,10 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
-
-        {/* Chain status footer */}
-        {chains.length > 0 && (
-          <div className="p-3 border-t border-zinc-800 text-xs text-zinc-500 space-y-1">
-            {chains.map(c => (
-              <div key={c.directory} className="flex justify-between">
-                <span>{c.directory}</span>
-                <span className="text-zinc-400">#{c.height}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-y-auto scrollbar-thin">
+      <main className="flex-1 overflow-y-auto scrollbar-thin bg-zinc-950">
         <Outlet />
       </main>
     </div>

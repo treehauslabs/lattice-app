@@ -15,6 +15,13 @@ import type {
   FinalityResponse,
   PrepareTransactionRequest,
   PrepareTransactionResponse,
+  BlockTransactionsResponse,
+  BlockChildrenResponse,
+  AccountStateResponse,
+  StateSummaryResponse,
+  DepositStateResponse,
+  ReceiptStateResponse,
+  DepositsListResponse,
 } from './types'
 
 class LatticeClient {
@@ -80,6 +87,16 @@ class LatticeClient {
     return this.fetch(`/api/block/${id}${q}`)
   }
 
+  async getBlockTransactions(id: string | number, chain?: string): Promise<BlockTransactionsResponse> {
+    const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
+    return this.fetch(`/api/block/${id}/transactions${q}`)
+  }
+
+  async getBlockChildren(id: string | number, chain?: string): Promise<BlockChildrenResponse> {
+    const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
+    return this.fetch(`/api/block/${id}/children${q}`)
+  }
+
   async getMempool(chain?: string): Promise<MempoolInfo> {
     const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
     return this.fetch(`/api/mempool${q}`)
@@ -142,6 +159,42 @@ class LatticeClient {
       method: 'POST',
       body: JSON.stringify({ chain }),
     })
+  }
+
+  async getAccountState(address: string, chain?: string): Promise<AccountStateResponse> {
+    const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
+    return this.fetch(`/api/state/account/${address}${q}`)
+  }
+
+  async getStateSummary(chain?: string): Promise<StateSummaryResponse> {
+    const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
+    return this.fetch(`/api/state/summary${q}`)
+  }
+
+  async getDepositState(params: { demander: string; amount: number; nonce: string; chain: string }): Promise<DepositStateResponse> {
+    const q = new URLSearchParams({
+      demander: params.demander,
+      amount: String(params.amount),
+      nonce: params.nonce,
+      chain: params.chain,
+    })
+    return this.fetch(`/api/deposit?${q}`)
+  }
+
+  async listDeposits(chain: string, limit?: number): Promise<DepositsListResponse> {
+    const params = new URLSearchParams({ chain })
+    if (limit) params.set('limit', String(limit))
+    return this.fetch(`/api/deposits?${params}`)
+  }
+
+  async getReceiptState(params: { demander: string; amount: number; nonce: string; directory: string }): Promise<ReceiptStateResponse> {
+    const q = new URLSearchParams({
+      demander: params.demander,
+      amount: String(params.amount),
+      nonce: params.nonce,
+      directory: params.directory,
+    })
+    return this.fetch(`/api/receipt-state?${q}`)
   }
 }
 

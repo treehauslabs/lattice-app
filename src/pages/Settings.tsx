@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings as SettingsIcon, Globe, Shield, Trash2, Save } from 'lucide-react'
+import { Globe, Shield, Trash2, Save, CheckCircle2 } from 'lucide-react'
 import { lattice } from '../api/client'
 
 const RPC_URL_KEY = 'lattice_rpc_url'
@@ -44,66 +44,66 @@ export function SettingsPage() {
   }, [])
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-6 max-w-lg mx-auto">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
       {/* Connection */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 mb-4">
-        <h2 className="font-semibold mb-3 flex items-center gap-2">
-          <Globe size={16} className="text-lattice-400" /> Connection
+      <div className="bg-zinc-900/80 rounded-2xl p-5 mb-4">
+        <h2 className="font-semibold text-sm mb-4 flex items-center gap-2">
+          <Globe size={14} className="text-lattice-400" /> Connection
         </h2>
         <div className="space-y-3">
           <div>
-            <label className="text-xs text-zinc-500 block mb-1">RPC URL (leave empty for same-origin)</label>
+            <label className="text-[11px] text-zinc-500 block mb-1">RPC URL (leave empty for same-origin)</label>
             <input
               value={rpcUrl}
               onChange={e => setRpcUrl(e.target.value)}
               placeholder="http://127.0.0.1:8080"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-lattice-500"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:border-lattice-500 placeholder:text-zinc-600"
             />
           </div>
           <div>
-            <label className="text-xs text-zinc-500 block mb-1">Auth Token (optional, from .cookie file)</label>
+            <label className="text-[11px] text-zinc-500 block mb-1">Auth Token (optional)</label>
             <input
               value={authToken}
               onChange={e => setAuthToken(e.target.value)}
               type="password"
-              placeholder="Bearer token"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-lattice-500"
+              placeholder="From .cookie file"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-sm font-mono focus:outline-none focus:border-lattice-500 placeholder:text-zinc-600"
             />
           </div>
           <button
             onClick={handleSave}
-            className="flex items-center gap-1.5 px-4 py-2 bg-lattice-600 hover:bg-lattice-700 rounded-lg text-sm font-medium"
+            className="flex items-center gap-1.5 px-5 py-2.5 bg-lattice-600 hover:bg-lattice-500 rounded-xl text-sm font-semibold transition-colors"
           >
-            <Save size={14} /> {saved ? 'Saved' : 'Save'}
+            {saved ? <><CheckCircle2 size={14} /> Saved</> : <><Save size={14} /> Save</>}
           </button>
         </div>
       </div>
 
       {/* Security */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 mb-4">
-        <h2 className="font-semibold mb-3 flex items-center gap-2">
-          <Shield size={16} className="text-lattice-400" /> Security
+      <div className="bg-zinc-900/80 rounded-2xl p-5 mb-4">
+        <h2 className="font-semibold text-sm mb-3 flex items-center gap-2">
+          <Shield size={14} className="text-lattice-400" /> Security
         </h2>
-        <div className="text-sm text-zinc-400 space-y-2 mb-4">
+        <div className="text-sm text-zinc-400 space-y-2 leading-relaxed">
           <p>Private keys are encrypted with AES-256-GCM using a password-derived key (PBKDF2, 600k iterations).</p>
           <p>Keys never leave your browser. Transaction signing happens entirely client-side using secp256k1 ECDSA.</p>
-          <p>The CID of the transaction body (which is what gets signed) is computed server-side via the <code className="text-lattice-400">/api/transaction/prepare</code> endpoint to ensure CID compatibility with the node.</p>
+          <p>Transaction body CIDs are computed server-side via the prepare endpoint to ensure compatibility.</p>
         </div>
       </div>
 
       {/* Danger zone */}
-      <div className="bg-zinc-900 border border-red-900/30 rounded-lg p-4">
-        <h2 className="font-semibold mb-3 text-red-400 flex items-center gap-2">
-          <Trash2 size={16} /> Danger Zone
+      <div className="bg-zinc-900/80 rounded-2xl p-5 border border-red-900/20">
+        <h2 className="font-semibold text-sm mb-3 text-red-400 flex items-center gap-2">
+          <Trash2 size={14} /> Danger Zone
         </h2>
-        <p className="text-sm text-zinc-400 mb-3">
+        <p className="text-sm text-zinc-400 mb-4">
           Delete all wallet data from this browser. This is irreversible.
         </p>
         <button
           onClick={handleClearWallet}
-          className="px-4 py-2 bg-red-600/20 text-red-400 hover:bg-red-600/30 rounded-lg text-sm font-medium"
+          className="px-5 py-2.5 bg-red-600/15 text-red-400 hover:bg-red-600/25 rounded-xl text-sm font-semibold transition-colors"
         >
           Clear Wallet Data
         </button>

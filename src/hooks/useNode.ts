@@ -7,6 +7,7 @@ interface NodeState {
   chains: ChainStatus[]
   peers: PeersResponse | null
   genesisHash: string
+  nexus: string
   error: string | null
   refresh: () => Promise<void>
   selectedChain: string
@@ -20,6 +21,7 @@ export function useNodeProvider(): NodeState {
   const [chains, setChains] = useState<ChainStatus[]>([])
   const [peers, setPeers] = useState<PeersResponse | null>(null)
   const [genesisHash, setGenesisHash] = useState('')
+  const [nexus, setNexus] = useState('Nexus')
   const [error, setError] = useState<string | null>(null)
   const [selectedChain, setSelectedChain] = useState('Nexus')
 
@@ -31,6 +33,7 @@ export function useNodeProvider(): NodeState {
       ])
       setChains(info.chains)
       setGenesisHash(info.genesisHash)
+      if (info.nexus) setNexus(info.nexus)
       setPeers(peersData)
       setConnected(true)
       setError(null)
@@ -46,7 +49,7 @@ export function useNodeProvider(): NodeState {
     return () => clearInterval(interval)
   }, [refresh])
 
-  return { connected, chains, peers, genesisHash, error, refresh, selectedChain, setSelectedChain }
+  return { connected, chains, peers, genesisHash, nexus, error, refresh, selectedChain, setSelectedChain }
 }
 
 export const NodeProvider = NodeContext.Provider

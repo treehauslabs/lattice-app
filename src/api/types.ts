@@ -10,6 +10,7 @@ export interface ChainStatus {
 export interface ChainInfoResponse {
   chains: ChainStatus[]
   genesisHash: string
+  nexus: string
 }
 
 export interface ChainSpec {
@@ -30,10 +31,18 @@ export interface BlockInfo {
   timestamp: number
   previousBlock: string | null
   difficulty: string
+  nextDifficulty: string
   nonce: number
+  version: number
   transactionsCID: string
   homesteadCID: string
   frontierCID: string
+  parentHomesteadCID: string
+  specCID: string
+  childBlocksCID: string
+  transactionCount: number
+  childBlockCount: number
+  chain: string
 }
 
 export interface BalanceResponse {
@@ -122,33 +131,106 @@ export interface PrepareTransactionRequest {
   signers: string[]
   fee: number
   accountActions: { owner: string; delta: number }[]
-  swapActions?: {
+  depositActions?: {
     nonce: string
-    sender: string
-    recipient: string
-    amount: number
-    timelock: number
+    demander: string
+    amountDemanded: number
+    amountDeposited: number
   }[]
-  swapClaimActions?: {
+  receiptActions?: {
+    withdrawer: string
     nonce: string
-    sender: string
-    recipient: string
-    amount: number
-    timelock: number
-    isRefund: boolean
+    demander: string
+    amountDemanded: number
+    directory: string
   }[]
-  settleActions?: {
+  withdrawalActions?: {
+    withdrawer: string
     nonce: string
-    senderA: string
-    senderB: string
-    swapKeyA: string
-    directoryA: string
-    swapKeyB: string
-    directoryB: string
+    demander: string
+    amountDemanded: number
+    amountWithdrawn: number
   }[]
 }
 
 export interface PrepareTransactionResponse {
   bodyCID: string
   bodyData: string
+}
+
+export interface BlockTransactionSummary {
+  txCID: string
+  bodyCID: string
+  fee: number
+  nonce: number
+  signers: string[]
+  accountActionCount: number
+  depositActionCount: number
+  receiptActionCount: number
+  withdrawalActionCount: number
+}
+
+export interface BlockTransactionsResponse {
+  transactions: BlockTransactionSummary[]
+  count: number
+  blockHash: string
+}
+
+export interface ChildBlockEntry {
+  directory: string
+  blockHash: string
+  index: number
+  timestamp: number
+  difficulty: string
+  transactionCount: number
+}
+
+export interface BlockChildrenResponse {
+  children: ChildBlockEntry[]
+  count: number
+}
+
+export interface AccountStateResponse {
+  address: string
+  chain: string
+  balance: number
+  nonce: number
+  exists: boolean
+  recentTransactions: TransactionHistoryEntry[]
+  transactionCount: number
+}
+
+export interface StateSummaryResponse {
+  chain: string
+  height: number
+  tip: string
+  stateRoot: string
+}
+
+export interface DepositStateResponse {
+  exists: boolean
+  amountDeposited?: number
+  chain: string
+  key: string
+}
+
+export interface ReceiptStateResponse {
+  exists: boolean
+  withdrawer?: string
+  directory: string
+  key: string
+}
+
+export interface DepositEntry {
+  key: string
+  demander: string
+  amountDemanded: number
+  nonce: string
+  amountDeposited: number
+}
+
+export interface DepositsListResponse {
+  deposits: DepositEntry[]
+  count: number
+  chain: string
 }
