@@ -104,8 +104,10 @@ export function Trading() {
               </div>
             </div>
           ) : (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-center">
-              <p className="text-sm text-zinc-500">Create a wallet to start trading</p>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 text-center">
+              <Wallet size={20} className="mx-auto text-zinc-600 mb-2" />
+              <p className="text-sm text-zinc-400 mb-1">Create a wallet to start trading</p>
+              <p className="text-xs text-zinc-600">Go to Wallet to create or import an account</p>
             </div>
           )}
 
@@ -228,9 +230,11 @@ function BuyView({ chain, nexusBalance, onFill, hasWallet }: {
         </div>
       ) : deposits.length === 0 ? (
         <div className="p-8 text-center">
-          <Tag size={20} className="mx-auto text-zinc-700 mb-2" />
-          <p className="text-sm text-zinc-500">No orders available</p>
-          <p className="text-xs text-zinc-600 mt-1">Offers to sell {chain} tokens will appear here</p>
+          <Tag size={20} className="mx-auto text-zinc-600 mb-2" />
+          <p className="text-sm text-zinc-400">No orders available</p>
+          <p className="text-xs text-zinc-600 mt-2 max-w-[240px] mx-auto leading-relaxed">
+            When someone creates a sell offer on {chain}, it will appear here for you to fill
+          </p>
         </div>
       ) : (
         <div className="divide-y divide-zinc-800/50">
@@ -727,8 +731,9 @@ interface SavedOrder {
   depositTxCID?: string
   receiptTxCID?: string
   withdrawTxCID?: string
+  claimTxCID?: string
   timestamp: number
-  status: 'open' | 'complete' | 'partial'
+  status: 'open' | 'complete' | 'partial' | 'claimable'
 }
 
 function saveOrder(order: SavedOrder) {
@@ -742,6 +747,14 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
     JSON.parse(localStorage.getItem('lattice_orders') || '[]')
   )
   const [checking, setChecking] = useState<number | null>(null)
+  const [claimOrder, setClaimOrder] = useState<{ order: SavedOrder; index: number } | null>(null)
+
+  const updateOrder = (index: number, updates: Partial<SavedOrder>) => {
+    const updated = [...orders]
+    updated[index] = { ...updated[index], ...updates }
+    setOrders(updated)
+    localStorage.setItem('lattice_orders', JSON.stringify(updated))
+  }
 
   const checkOrderStatus = async (order: SavedOrder, index: number) => {
     setChecking(index)
@@ -760,17 +773,16 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
       })
 
       let newStatus: SavedOrder['status'] = 'open'
-      if (rec.exists && !dep.exists) {
-        newStatus = 'complete'
+      if (order.type === 'sell' && rec.exists && !order.claimTxCID) {
+        newStatus = 'claimable'
+      } else if (rec.exists && !dep.exists) {
+        newStatus = order.claimTxCID ? 'complete' : (order.type === 'buy' ? 'complete' : 'claimable')
       } else if (rec.exists || dep.exists) {
         newStatus = 'partial'
       }
 
       if (newStatus !== order.status) {
-        const updated = [...orders]
-        updated[index] = { ...order, status: newStatus }
-        setOrders(updated)
-        localStorage.setItem('lattice_orders', JSON.stringify(updated))
+        updateOrder(index, { status: newStatus })
       }
     } catch {}
     setChecking(null)
@@ -778,49 +790,217 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
 
   if (orders.length === 0) {
     return (
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-10 text-center">
-        <Clock size={28} className="mx-auto text-zinc-700 mb-3" />
-        <p className="text-sm text-zinc-500">No orders yet</p>
-        <p className="text-xs text-zinc-600 mt-1">Your buy and sell orders will appear here</p>
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center">
+        <Clock size={24} className="mx-auto text-zinc-700 mb-3" />
+        <p className="text-sm text-zinc-400 mb-4">No orders yet</p>
+        <div className="bg-zinc-800/40 rounded-lg p-4 text-left text-xs text-zinc-500 space-y-2">
+          <p className="text-zinc-400 font-medium mb-2">How cross-chain trading works:</p>
+          <p>1. A seller creates an offer, locking tokens on a child chain</p>
+          <p>2. A buyer fills the offer — payment and token claim happen automatically</p>
+          <p>3. The seller's payment is auto-claimed on the nexus chain</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-2">
-      {orders.map((order, i) => (
-        <div
-          key={`${order.nonce}-${i}`}
-          className="bg-zinc-900 border border-zinc-800 rounded-xl p-4"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
-                order.type === 'buy'
-                  ? 'bg-emerald-600/15 text-emerald-400'
-                  : 'bg-red-600/15 text-red-400'
-              }`}>
-                {order.type}
-              </span>
-              <span className="text-sm font-medium">{order.amount.toLocaleString()} {order.chain}</span>
+    <>
+      <div className="space-y-2">
+        {orders.map((order, i) => (
+          <div
+            key={`${order.nonce}-${i}`}
+            className="bg-zinc-900 border border-zinc-800 rounded-xl p-4"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
+                  order.type === 'buy'
+                    ? 'bg-emerald-600/15 text-emerald-400'
+                    : 'bg-red-600/15 text-red-400'
+                }`}>
+                  {order.type}
+                </span>
+                <span className="text-sm font-medium">{order.amount.toLocaleString()} {order.chain}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusBadge status={order.status} />
+                <button
+                  onClick={() => checkOrderStatus(order, i)}
+                  className="text-zinc-600 hover:text-zinc-300 transition-colors"
+                  title="Check status"
+                >
+                  <RefreshCw size={12} className={checking === i ? 'animate-spin' : ''} />
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <StatusBadge status={order.status} />
+            <div className="flex items-center justify-between text-xs text-zinc-500">
+              <span>{new Date(order.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+              {order.status === 'claimable' ? (
+                <button
+                  onClick={() => setClaimOrder({ order, index: i })}
+                  className="text-emerald-400 font-semibold hover:text-emerald-300 flex items-center gap-1 transition-colors"
+                >
+                  Claim Payment <ChevronRight size={12} />
+                </button>
+              ) : (
+                <span className="font-mono">{order.nonce.slice(0, 12)}...</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {claimOrder && (
+        <ClaimPaymentModal
+          order={claimOrder.order}
+          nexus={nexus}
+          onClose={() => setClaimOrder(null)}
+          onComplete={(claimTxCID) => {
+            updateOrder(claimOrder.index, { status: 'complete', claimTxCID })
+            setClaimOrder(null)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+// ============================================================
+// Claim Payment Modal (Seller collects nexus payment)
+// ============================================================
+
+function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
+  order: SavedOrder; nexus: string
+  onClose: () => void; onComplete: (claimTxCID: string) => void
+}) {
+  const { activeAccount, unlock } = useWallet()
+  const [step, setStep] = useState<'review' | 'executing' | 'done'>('review')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [claimTxCID, setClaimTxCID] = useState('')
+
+  const fee = 100
+
+  const handleClaim = async () => {
+    if (!activeAccount) return
+    if (!password) { setError('Enter your password'); return }
+    setError('')
+    setStep('executing')
+
+    try {
+      const privateKey = await unlock(password)
+      const nonceResp = await lattice.getNonce(activeAccount.address, nexus)
+
+      const withdrawSigned = await buildWithdrawal({
+        chainPath: [nexus],
+        from: activeAccount.address,
+        demander: order.demander,
+        amount: order.amount,
+        swapNonce: order.nonce,
+        fee,
+        nonce: nonceResp.nonce,
+        signerPublicKey: activeAccount.publicKey,
+      }, privateKey)
+
+      const resp = await lattice.submitTransaction(withdrawSigned, nexus)
+      if (!resp.accepted) throw new Error(resp.error || 'Claim rejected')
+
+      setClaimTxCID(resp.txCID)
+      setStep('done')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Claim failed')
+      setStep('review')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-end sm:items-center justify-center z-50" onClick={onClose}>
+      <div
+        className="bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md sm:mx-4 overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+          <h3 className="font-semibold">
+            {step === 'done' ? 'Payment Claimed' : 'Claim Payment'}
+          </h3>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-5">
+          {step === 'review' && (
+            <div className="space-y-4">
+              <div className="bg-zinc-800/50 rounded-xl p-4 text-center">
+                <div className="text-3xl font-bold text-emerald-400">{order.amount.toLocaleString()}</div>
+                <div className="text-sm text-zinc-500 mt-1">{nexus} tokens to claim</div>
+                <div className="border-t border-zinc-700/50 mt-3 pt-3 space-y-2 text-xs text-left">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">From your sell offer</span>
+                    <span className="text-zinc-200">{order.amount.toLocaleString()} {order.chain}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Network fee</span>
+                    <span className="text-zinc-400">{fee.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between font-medium">
+                    <span className="text-zinc-400">You receive</span>
+                    <span className="text-emerald-400">{(order.amount - fee).toLocaleString()} {nexus}</span>
+                  </div>
+                </div>
+              </div>
+
+              <input
+                value={password}
+                onChange={e => { setPassword(e.target.value); setError('') }}
+                type="password"
+                placeholder="Wallet password to confirm"
+                autoFocus
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 placeholder:text-zinc-600"
+                onKeyDown={e => e.key === 'Enter' && handleClaim()}
+              />
+
+              {error && (
+                <p className="text-red-400 text-xs flex items-center gap-1.5">
+                  <AlertCircle size={12} /> {error}
+                </p>
+              )}
+
               <button
-                onClick={() => checkOrderStatus(order, i)}
-                className="text-zinc-600 hover:text-zinc-300 transition-colors"
-                title="Check status"
+                onClick={handleClaim}
+                disabled={!password}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-sm font-semibold disabled:opacity-40 transition-colors"
               >
-                <RefreshCw size={12} className={checking === i ? 'animate-spin' : ''} />
+                Claim Payment
               </button>
             </div>
-          </div>
-          <div className="flex items-center justify-between text-xs text-zinc-500">
-            <span>{new Date(order.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-            <span className="font-mono">{order.nonce.slice(0, 12)}...</span>
-          </div>
+          )}
+
+          {step === 'executing' && (
+            <div className="text-center py-8">
+              <Loader2 size={32} className="mx-auto text-emerald-400 animate-spin mb-3" />
+              <p className="text-sm text-zinc-300">Claiming payment on {nexus}...</p>
+            </div>
+          )}
+
+          {step === 'done' && (
+            <div className="text-center py-6">
+              <CheckCircle2 size={48} className="mx-auto text-emerald-400 mb-3" />
+              <h3 className="text-lg font-semibold text-emerald-400 mb-1">Payment Claimed</h3>
+              <p className="text-sm text-zinc-500 mb-2">
+                {order.amount.toLocaleString()} {nexus} added to your balance
+              </p>
+              <p className="text-xs font-mono text-zinc-600 break-all mb-6">{claimTxCID}</p>
+              <button
+                onClick={() => onComplete(claimTxCID)}
+                className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-sm font-medium transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          )}
         </div>
-      ))}
+      </div>
     </div>
   )
 }
@@ -847,6 +1027,12 @@ function StatusBadge({ status }: { status: SavedOrder['status'] }) {
     case 'complete':
       return (
         <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+          <CheckCircle2 size={10} /> Complete
+        </span>
+      )
+    case 'claimable':
+      return (
+        <span className="flex items-center gap-1 text-[10px] text-lattice-400 font-semibold">
           <CheckCircle2 size={10} /> Filled
         </span>
       )

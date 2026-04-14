@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
-  Blocks, Pickaxe, Users, ArrowUpDown, Clock, TrendingUp, Layers, ChevronRight,
+  Blocks, ArrowUpDown, Clock, TrendingUp, Layers, ChevronRight,
 } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
 import { useWallet } from '../hooks/useWallet'
@@ -45,8 +45,8 @@ export function Dashboard() {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center max-w-sm">
-          <div className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center mx-auto mb-4">
-            <Blocks size={28} className="text-zinc-700" />
+          <div className="w-16 h-16 rounded-2xl bg-lattice-600/10 flex items-center justify-center mx-auto mb-4">
+            <Blocks size={28} className="text-lattice-500" />
           </div>
           <h2 className="text-xl font-semibold text-zinc-200 mb-2">No Node Connected</h2>
           <p className="text-zinc-500 text-sm leading-relaxed">
@@ -61,70 +61,78 @@ export function Dashboard() {
   const totalBalance = Object.values(chainBalances).reduce((a, b) => a + b, 0)
   const blockTime = latestBlock?.timestamp
     ? new Date(latestBlock.timestamp).toLocaleTimeString()
-    : '--'
+    : null
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+      {/* Hero banner */}
+      <div className="bg-gradient-to-br from-lattice-900/40 via-zinc-900/80 to-zinc-900/80 rounded-2xl p-5 mb-6 border border-lattice-800/20">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-2xl font-bold">Dashboard</h1>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-xs text-zinc-500">
+                Block #{chain?.height.toLocaleString() ?? '0'}
+                {chain?.mining && <span className="text-emerald-400 ml-2">Mining</span>}
+              </span>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-zinc-500">Peers</div>
+            <div className="text-lg font-bold">{peers?.count ?? 0}</div>
+          </div>
+        </div>
+
+        {/* Inline stats row */}
+        <div className="flex gap-4 text-xs">
+          <div className="flex items-center gap-1.5 text-zinc-400">
+            <ArrowUpDown size={11} />
+            <span className="text-zinc-500">Mempool</span>
+            <span className="font-medium text-zinc-300">{chain?.mempoolCount ?? 0}</span>
+          </div>
+          {blockTime && (
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <Clock size={11} />
+              <span className="text-zinc-500">Last block</span>
+              <span className="font-medium text-zinc-300">{blockTime}</span>
+            </div>
+          )}
+          {fee && (
+            <div className="flex items-center gap-1.5 text-zinc-400">
+              <TrendingUp size={11} />
+              <span className="text-zinc-500">Fee</span>
+              <span className="font-medium text-zinc-300">{fee.fee.toLocaleString()}</span>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Portfolio card */}
       {activeAccount && (
         <div className="bg-zinc-900/80 rounded-2xl p-5 mb-6">
           <div className="text-xs text-zinc-500 mb-1">Total Balance</div>
           <div className="text-3xl font-bold mb-4">{totalBalance.toLocaleString()}</div>
-          <div className="flex gap-3 flex-wrap">
-            {chains.map(c => (
-              <div
-                key={c.directory}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
-                  c.directory === selectedChain
-                    ? 'bg-lattice-600/10 text-lattice-400'
-                    : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
-                }`}
-                onClick={() => setSelectedChain(c.directory)}
-              >
-                <span className="font-medium">{c.directory}</span>
-                <span className="text-zinc-500">{(chainBalances[c.directory] ?? 0).toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
+          {chains.length > 1 && (
+            <div className="flex gap-3 flex-wrap">
+              {chains.map(c => (
+                <div
+                  key={c.directory}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                    c.directory === selectedChain
+                      ? 'bg-lattice-600/10 text-lattice-400'
+                      : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800'
+                  }`}
+                  onClick={() => setSelectedChain(c.directory)}
+                >
+                  <span className="font-medium">{c.directory}</span>
+                  <span className="text-zinc-500">{(chainBalances[c.directory] ?? 0).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
-
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <StatCard
-          icon={Blocks}
-          label="Block Height"
-          value={chain ? `#${chain.height.toLocaleString()}` : '--'}
-        />
-        <StatCard
-          icon={Pickaxe}
-          label="Mining"
-          value={chain?.mining ? 'Active' : 'Idle'}
-          accent={chain?.mining ? 'emerald' : undefined}
-        />
-        <StatCard
-          icon={Users}
-          label="Peers"
-          value={String(peers?.count ?? 0)}
-        />
-        <StatCard
-          icon={ArrowUpDown}
-          label="Mempool"
-          value={String(chain?.mempoolCount ?? 0)}
-        />
-        <StatCard
-          icon={Clock}
-          label="Last Block"
-          value={blockTime}
-        />
-        <StatCard
-          icon={TrendingUp}
-          label="Fee Estimate"
-          value={fee ? `${fee.fee.toLocaleString()}` : '--'}
-        />
-      </div>
 
       {/* Chain table */}
       <div className="mb-6">
@@ -183,22 +191,6 @@ export function Dashboard() {
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function StatCard({ icon: Icon, label, value, accent }: {
-  icon: typeof Blocks; label: string; value: string; accent?: 'emerald'
-}) {
-  return (
-    <div className="bg-zinc-900/80 rounded-xl p-4">
-      <div className="flex items-center gap-1.5 text-zinc-500 text-[11px] mb-2">
-        <Icon size={12} />
-        {label}
-      </div>
-      <div className={`text-lg font-semibold ${accent === 'emerald' ? 'text-emerald-400' : 'text-zinc-100'}`}>
-        {value}
-      </div>
     </div>
   )
 }

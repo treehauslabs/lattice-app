@@ -238,13 +238,21 @@ export function WalletPage() {
       </div>
 
       {accounts.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="w-16 h-16 rounded-2xl bg-zinc-900 flex items-center justify-center mx-auto mb-4">
-            <Key size={28} className="text-zinc-700" />
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-2xl bg-lattice-600/10 flex items-center justify-center mx-auto mb-4">
+            <Key size={28} className="text-lattice-500" />
           </div>
           <h2 className="text-lg font-semibold text-zinc-300 mb-2">No Accounts</h2>
           <p className="text-zinc-500 text-sm mb-1">Create or import a key pair to get started.</p>
-          <p className="text-zinc-600 text-xs">Keys are encrypted with AES-256-GCM and never leave your browser.</p>
+          <p className="text-zinc-600 text-xs mb-6">Keys are encrypted with AES-256-GCM and never leave your browser.</p>
+          <div className="flex gap-3 justify-center">
+            <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-6 py-3 bg-lattice-600 hover:bg-lattice-500 rounded-xl text-sm font-semibold transition-colors">
+              <Plus size={16} /> Create Account
+            </button>
+            <button onClick={() => setShowImport(true)} className="flex items-center gap-2 px-6 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl text-sm font-medium transition-colors">
+              <Download size={16} /> Import Key
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">

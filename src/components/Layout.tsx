@@ -30,7 +30,7 @@ export function Layout() {
         </div>
 
         {/* Chain selector */}
-        {chains.length > 0 && (
+        {chains.length > 1 ? (
           <div className="px-3 pb-3">
             <div className="space-y-0.5">
               {chains.map(c => (
@@ -51,6 +51,16 @@ export function Layout() {
                   <span className="text-[10px] text-zinc-600 tabular-nums">#{c.height}</span>
                 </button>
               ))}
+            </div>
+          </div>
+        ) : chains.length === 1 && (
+          <div className="px-5 pb-3">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5 text-lattice-400">
+                {chains[0].mining && <Pickaxe size={10} className="text-emerald-400" />}
+                <span className="font-medium">{chains[0].directory}</span>
+              </div>
+              <span className="text-zinc-600 tabular-nums">#{chains[0].height}</span>
             </div>
           </div>
         )}
