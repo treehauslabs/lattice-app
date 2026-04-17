@@ -23,6 +23,8 @@ export interface ChainSpec {
   maxBlockSize: number
   premine: number
   premineAmount: number
+  transactionFilters: string[]
+  actionFilters: string[]
 }
 
 export interface BlockInfo {
@@ -158,6 +160,24 @@ export interface PrepareTransactionResponse {
   bodyData: string
 }
 
+export interface TransactionDetail {
+  txCID: string
+  bodyCID: string
+  blockHash: string
+  blockHeight: number
+  timestamp: number
+  fee: number
+  nonce: number
+  signers: string[]
+  chainPath: string[]
+  signatures: Record<string, string>
+  accountActions: { owner: string; delta: number }[]
+  depositActions: { nonce: string; demander: string; amountDemanded: number; amountDeposited: number }[]
+  receiptActions: { withdrawer: string; nonce: string; demander: string; amountDemanded: number; directory: string }[]
+  withdrawalActions: { withdrawer: string; nonce: string; demander: string; amountDemanded: number; amountWithdrawn: number }[]
+  chain: string
+}
+
 export interface BlockTransactionSummary {
   txCID: string
   bodyCID: string
@@ -219,6 +239,23 @@ export interface ReceiptStateResponse {
   withdrawer?: string
   directory: string
   key: string
+}
+
+export interface BlockStateResponse {
+  blockHash: string
+  blockHeight: number
+  homesteadCID: string
+  frontierCID: string
+  sections: { name: string; cid: string }[]
+  chain: string
+}
+
+export interface BlockAccountStateResponse {
+  address: string
+  balance: number
+  exists: boolean
+  blockHeight: number
+  chain: string
 }
 
 export interface DepositEntry {

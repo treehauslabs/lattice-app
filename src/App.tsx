@@ -1,7 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Dashboard } from './pages/Dashboard'
-import { Explorer } from './pages/Explorer'
 import { WalletPage } from './pages/Wallet'
 import { Trading } from './pages/Trading'
 import { NodeControl } from './pages/NodeControl'
@@ -37,7 +36,6 @@ export function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<Dashboard />} />
-          <Route path="explorer" element={<Explorer />} />
           <Route path="wallet" element={<WalletPage />} />
           <Route path="trading" element={<Trading />} />
           <Route path="node" element={<NodeControl />} />

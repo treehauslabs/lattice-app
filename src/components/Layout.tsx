@@ -1,10 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { LayoutDashboard, Search, Wallet, ArrowLeftRight, Server, Settings, Pickaxe, Activity } from 'lucide-react'
+import { LayoutDashboard, Wallet, ArrowLeftRight, Server, Settings, Pickaxe, Activity } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
 
 const nav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/explorer', icon: Search, label: 'Explorer' },
   { to: '/wallet', icon: Wallet, label: 'Wallet' },
   { to: '/trading', icon: ArrowLeftRight, label: 'Exchange' },
   { to: '/node', icon: Server, label: 'Node' },

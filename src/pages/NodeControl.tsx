@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Server, Pickaxe, Users, Settings2 } from 'lucide-react'
+import { Server, Pickaxe, Users, Settings2, Filter } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
 import { lattice } from '../api/client'
 import type { ChainStatus, ChainSpec } from '../api/types'
@@ -51,6 +51,35 @@ function MiningCard({ chain }: { chain: ChainStatus }) {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+function ChainFilterCard({
+  chain, filters, emptyMessage,
+}: { chain: string; filters: string[]; emptyMessage: string }) {
+  return (
+    <div className="bg-zinc-900/80 rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-medium text-zinc-200">{chain}</span>
+        <span className="text-xs text-zinc-500 tabular-nums">
+          {filters.length} filter{filters.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      {filters.length === 0 ? (
+        <div className="text-xs text-zinc-600 italic">{emptyMessage}</div>
+      ) : (
+        <div className="space-y-2">
+          {filters.map((src, i) => (
+            <pre
+              key={i}
+              className="bg-zinc-950/60 border border-zinc-800/60 rounded-lg px-3 py-2 text-[11px] font-mono text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto"
+            >
+              {src}
+            </pre>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -143,7 +172,7 @@ export function NodeControl() {
               </thead>
               <tbody>
                 {([
-                  ['Block Time', (s: ChainSpec) => `${s.targetBlockTime}s`],
+                  ['Block Time', (s: ChainSpec) => `${s.targetBlockTime / 1000}s`],
                   ['Initial Reward', (s: ChainSpec) => s.initialReward.toLocaleString()],
                   ['Halving', (s: ChainSpec) => `${s.halvingInterval.toLocaleString()} blks`],
                   ['Max Txs/Block', (s: ChainSpec) => s.maxTransactionsPerBlock.toLocaleString()],
@@ -163,6 +192,49 @@ export function NodeControl() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </>
+      )}
+
+      {/* Transaction Filters */}
+      {Object.keys(specs).length > 0 && (
+        <>
+          <h2 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">
+            <Filter size={14} /> Transaction Filters
+          </h2>
+          <div className="space-y-3 mb-8">
+            {chains.map(c => {
+              const spec = specs[c.directory]
+              if (!spec) return null
+              const filters = spec.transactionFilters ?? []
+              return (
+                <ChainFilterCard
+                  key={c.directory}
+                  chain={c.directory}
+                  filters={filters}
+                  emptyMessage="No filters — all valid transactions accepted"
+                />
+              )
+            })}
+          </div>
+
+          <h2 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">
+            <Filter size={14} /> Action Filters
+          </h2>
+          <div className="space-y-3 mb-8">
+            {chains.map(c => {
+              const spec = specs[c.directory]
+              if (!spec) return null
+              const filters = spec.actionFilters ?? []
+              return (
+                <ChainFilterCard
+                  key={c.directory}
+                  chain={c.directory}
+                  filters={filters}
+                  emptyMessage="No filters — all valid actions accepted"
+                />
+              )
+            })}
           </div>
         </>
       )}

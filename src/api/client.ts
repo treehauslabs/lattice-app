@@ -9,6 +9,7 @@ import type {
   FeeEstimate,
   FeeHistogram,
   TransactionReceipt,
+  TransactionDetail,
   TransactionHistoryResponse,
   SubmitTransactionRequest,
   SubmitTransactionResponse,
@@ -22,6 +23,8 @@ import type {
   DepositStateResponse,
   ReceiptStateResponse,
   DepositsListResponse,
+  BlockStateResponse,
+  BlockAccountStateResponse,
 } from './types'
 
 class LatticeClient {
@@ -122,6 +125,14 @@ class LatticeClient {
     return this.fetch(`/api/receipt/${txCID}${q}`)
   }
 
+  async getTransaction(txCID: string, chain?: string, blockHash?: string): Promise<TransactionDetail> {
+    const params = new URLSearchParams()
+    if (chain) params.set('chain', chain)
+    if (blockHash) params.set('blockHash', blockHash)
+    const q = params.toString() ? `?${params}` : ''
+    return this.fetch(`/api/transaction/${txCID}${q}`)
+  }
+
   async getTransactionHistory(address: string, chain?: string): Promise<TransactionHistoryResponse> {
     const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
     return this.fetch(`/api/transactions/${address}${q}`)
@@ -185,6 +196,16 @@ class LatticeClient {
     const params = new URLSearchParams({ chain })
     if (limit) params.set('limit', String(limit))
     return this.fetch(`/api/deposits?${params}`)
+  }
+
+  async getBlockState(blockId: string | number, chain?: string): Promise<BlockStateResponse> {
+    const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
+    return this.fetch(`/api/block/${blockId}/state${q}`)
+  }
+
+  async getBlockAccountState(blockId: string | number, address: string, chain?: string): Promise<BlockAccountStateResponse> {
+    const q = chain ? `?chain=${encodeURIComponent(chain)}` : ''
+    return this.fetch(`/api/block/${blockId}/state/account/${address}${q}`)
   }
 
   async getReceiptState(params: { demander: string; amount: number; nonce: string; directory: string }): Promise<ReceiptStateResponse> {
