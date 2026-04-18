@@ -3,3 +3,9 @@ dist/
 .vite/
 *.local
 .DS_Store
+tsconfig.tsbuildinfo
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/lattice-node-*

@@ -27,6 +27,19 @@ import type {
   BlockAccountStateResponse,
 } from './types'
 
+type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
+
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+let tauriFetchPromise: Promise<FetchFn> | null = null
+async function getFetch(): Promise<FetchFn> {
+  if (!isTauri) return window.fetch.bind(window)
+  if (!tauriFetchPromise) {
+    tauriFetchPromise = import('@tauri-apps/plugin-http').then((m) => m.fetch as FetchFn)
+  }
+  return tauriFetchPromise
+}
+
 class LatticeClient {
   private baseUrl: string
   private authToken: string | null = null
@@ -50,7 +63,8 @@ class LatticeClient {
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`
     }
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const doFetch = await getFetch()
+    const res = await doFetch(`${this.baseUrl}${path}`, {
       ...options,
       headers: { ...headers, ...options?.headers },
     })
@@ -158,10 +172,10 @@ class LatticeClient {
     })
   }
 
-  async startMining(chain: string): Promise<{ started: boolean }> {
+  async startMining(chain: string, identity?: { publicKey: string; privateKey: string }): Promise<{ started: boolean }> {
     return this.fetch('/api/mining/start', {
       method: 'POST',
-      body: JSON.stringify({ chain }),
+      body: JSON.stringify({ chain, ...(identity ?? {}) }),
     })
   }
 

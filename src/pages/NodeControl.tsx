@@ -1,18 +1,120 @@
-import { useState, useEffect } from 'react'
-import { Server, Pickaxe, Users, Settings2, Filter } from 'lucide-react'
+import { useState } from 'react'
+import { Server, Pickaxe, Users, X, AlertCircle } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
+import { useWallet } from '../hooks/useWallet'
 import { lattice } from '../api/client'
-import type { ChainStatus, ChainSpec } from '../api/types'
+import { publicKeyFromPrivate } from '../wallet/signer'
+import { decryptPrivateKey } from '../wallet/keystore'
+import type { ChainStatus } from '../api/types'
+
+function UnlockMinerModal({
+  chain, onClose, onUnlocked,
+}: {
+  chain: string
+  onClose: () => void
+  onUnlocked: (identity: { publicKey: string; privateKey: string }) => Promise<void>
+}) {
+  const { accounts, minerIndex, activeIndex } = useWallet()
+  const initialIndex = minerIndex >= 0 ? minerIndex : activeIndex
+  const [selectedIndex, setSelectedIndex] = useState(initialIndex)
+  const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const selectedAccount = accounts[selectedIndex]
+
+  const handleStart = async () => {
+    if (!selectedAccount) { setError('Select a wallet account'); return }
+    if (!password) { setError('Password required'); return }
+    setLoading(true)
+    setError('')
+    try {
+      const privateKey = await decryptPrivateKey(selectedAccount.encrypted, password)
+      const publicKey = publicKeyFromPrivate(privateKey)
+      await onUnlocked({ publicKey, privateKey })
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to unlock')
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-end sm:items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-zinc-900 border border-zinc-800 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md sm:mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800/60">
+          <h3 className="font-semibold">Start mining on {chain}</h3>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          {accounts.length === 0 ? (
+            <p className="text-sm text-zinc-400">Create a wallet account first — block rewards pay to a wallet address.</p>
+          ) : (
+            <>
+              <div>
+                <label className="text-[11px] text-zinc-500 block mb-1">Reward account</label>
+                <select
+                  value={selectedIndex}
+                  onChange={e => setSelectedIndex(parseInt(e.target.value))}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-3 text-sm focus:outline-none focus:border-lattice-500"
+                >
+                  {accounts.map((a, i) => (
+                    <option key={a.publicKey} value={i}>
+                      {a.name}{a.isMiner ? ' (Miner)' : ''} — {a.address.slice(0, 16)}...
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] text-zinc-500 block mb-1">Password</label>
+                <input
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  type="password"
+                  autoFocus
+                  placeholder="Wallet password"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-lattice-500 placeholder:text-zinc-600"
+                  onKeyDown={e => e.key === 'Enter' && handleStart()}
+                />
+              </div>
+              {error && <p className="text-red-400 text-xs flex items-center gap-1.5"><AlertCircle size={12} /> {error}</p>}
+              <button
+                onClick={handleStart}
+                disabled={loading}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-sm font-semibold disabled:opacity-50 transition-colors"
+              >
+                {loading ? 'Starting...' : 'Start mining'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function MiningCard({ chain }: { chain: ChainStatus }) {
   const [loading, setLoading] = useState(false)
+  const [showUnlock, setShowUnlock] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const toggle = async () => {
+  const handleClick = async () => {
+    setError(null)
+    if (chain.mining) {
+      setLoading(true)
+      try { await lattice.stopMining(chain.directory) }
+      catch (e) { setError(e instanceof Error ? e.message : 'Stop failed') }
+      setLoading(false)
+      return
+    }
+    setShowUnlock(true)
+  }
+
+  const startWithIdentity = async (identity: { publicKey: string; privateKey: string }) => {
+    setError(null)
     setLoading(true)
-    try {
-      if (chain.mining) await lattice.stopMining(chain.directory)
-      else await lattice.startMining(chain.directory)
-    } catch {}
+    try { await lattice.startMining(chain.directory, identity) }
+    catch (e) { setError(e instanceof Error ? e.message : 'Start failed') }
     setLoading(false)
   }
 
@@ -24,7 +126,7 @@ function MiningCard({ chain }: { chain: ChainStatus }) {
           <span className="text-sm font-medium">{chain.directory}</span>
         </div>
         <button
-          onClick={toggle}
+          onClick={handleClick}
           disabled={loading}
           className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
             chain.mining
@@ -51,60 +153,24 @@ function MiningCard({ chain }: { chain: ChainStatus }) {
           </div>
         </div>
       </div>
-    </div>
-  )
-}
-
-function ChainFilterCard({
-  chain, filters, emptyMessage,
-}: { chain: string; filters: string[]; emptyMessage: string }) {
-  return (
-    <div className="bg-zinc-900/80 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium text-zinc-200">{chain}</span>
-        <span className="text-xs text-zinc-500 tabular-nums">
-          {filters.length} filter{filters.length === 1 ? '' : 's'}
-        </span>
-      </div>
-      {filters.length === 0 ? (
-        <div className="text-xs text-zinc-600 italic">{emptyMessage}</div>
-      ) : (
-        <div className="space-y-2">
-          {filters.map((src, i) => (
-            <pre
-              key={i}
-              className="bg-zinc-950/60 border border-zinc-800/60 rounded-lg px-3 py-2 text-[11px] font-mono text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto"
-            >
-              {src}
-            </pre>
-          ))}
-        </div>
+      {error && (
+        <p className="mt-3 text-red-400 text-xs flex items-center gap-1.5">
+          <AlertCircle size={12} /> {error}
+        </p>
+      )}
+      {showUnlock && (
+        <UnlockMinerModal
+          chain={chain.directory}
+          onClose={() => setShowUnlock(false)}
+          onUnlocked={startWithIdentity}
+        />
       )}
     </div>
   )
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${bytes} B`
-}
-
 export function NodeControl() {
   const { connected, chains, peers, genesisHash } = useNode()
-  const [specs, setSpecs] = useState<Record<string, ChainSpec>>({})
-
-  useEffect(() => {
-    if (!connected) return
-    const fetchSpecs = async () => {
-      const results: Record<string, ChainSpec> = {}
-      for (const c of chains) {
-        try { results[c.directory] = await lattice.getChainSpec(c.directory) } catch {}
-      }
-      setSpecs(results)
-    }
-    fetchSpecs()
-  }, [connected, chains.length])
 
   if (!connected) {
     return (
@@ -153,91 +219,6 @@ export function NodeControl() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
         {chains.map(c => <MiningCard key={c.directory} chain={c} />)}
       </div>
-
-      {/* Chain Specs */}
-      {Object.keys(specs).length > 0 && (
-        <>
-          <h2 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">
-            <Settings2 size={14} /> Chain Specifications
-          </h2>
-          <div className="bg-zinc-900/80 rounded-2xl overflow-hidden mb-8">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-zinc-800/60 text-zinc-500 text-xs">
-                  <th className="text-left px-4 py-3">Parameter</th>
-                  {chains.map(c => (
-                    <th key={c.directory} className="text-right px-4 py-3">{c.directory}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {([
-                  ['Block Time', (s: ChainSpec) => `${s.targetBlockTime / 1000}s`],
-                  ['Initial Reward', (s: ChainSpec) => s.initialReward.toLocaleString()],
-                  ['Halving', (s: ChainSpec) => `${s.halvingInterval.toLocaleString()} blks`],
-                  ['Max Txs/Block', (s: ChainSpec) => s.maxTransactionsPerBlock.toLocaleString()],
-                  ['Max Block Size', (s: ChainSpec) => formatBytes(s.maxBlockSize)],
-                  ['Max State Growth', (s: ChainSpec) => s.maxStateGrowth.toLocaleString()],
-                  ['Premine Block', (s: ChainSpec) => s.premine > 0 ? `#${s.premine}` : 'None'],
-                  ['Premine Amount', (s: ChainSpec) => s.premineAmount > 0 ? s.premineAmount.toLocaleString() : 'None'],
-                ] as [string, (s: ChainSpec) => string][]).map(([label, fmt]) => (
-                  <tr key={label} className="border-b border-zinc-800/30 hover:bg-zinc-800/20 transition-colors">
-                    <td className="px-4 py-2.5 text-zinc-400 text-xs">{label}</td>
-                    {chains.map(c => (
-                      <td key={c.directory} className="px-4 py-2.5 text-right text-zinc-200 font-medium text-xs tabular-nums">
-                        {specs[c.directory] ? fmt(specs[c.directory]) : '...'}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      {/* Transaction Filters */}
-      {Object.keys(specs).length > 0 && (
-        <>
-          <h2 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">
-            <Filter size={14} /> Transaction Filters
-          </h2>
-          <div className="space-y-3 mb-8">
-            {chains.map(c => {
-              const spec = specs[c.directory]
-              if (!spec) return null
-              const filters = spec.transactionFilters ?? []
-              return (
-                <ChainFilterCard
-                  key={c.directory}
-                  chain={c.directory}
-                  filters={filters}
-                  emptyMessage="No filters — all valid transactions accepted"
-                />
-              )
-            })}
-          </div>
-
-          <h2 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">
-            <Filter size={14} /> Action Filters
-          </h2>
-          <div className="space-y-3 mb-8">
-            {chains.map(c => {
-              const spec = specs[c.directory]
-              if (!spec) return null
-              const filters = spec.actionFilters ?? []
-              return (
-                <ChainFilterCard
-                  key={c.directory}
-                  chain={c.directory}
-                  filters={filters}
-                  emptyMessage="No filters — all valid actions accepted"
-                />
-              )
-            })}
-          </div>
-        </>
-      )}
 
       {/* Peers */}
       <h2 className="text-sm font-semibold text-zinc-400 mb-3 flex items-center gap-2">

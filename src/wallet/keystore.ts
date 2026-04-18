@@ -9,6 +9,7 @@ export interface StoredAccount {
   address: string
   encrypted: string  // hex(salt + iv + ciphertext + tag)
   createdAt: number
+  isMiner?: boolean
 }
 
 export interface KeystoreState {

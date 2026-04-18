@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Blocks, ArrowUpDown, Clock, TrendingUp, Layers, ChevronRight,
+  Blocks, Clock, TrendingUp, Layers, ChevronRight,
   Search, ChevronLeft, ArrowRight, ArrowLeft,
   FileText, Box, GitBranch, User, Database, X, Hash,
   Timer, Coins, BarChart3, Gauge, HardDrive, Scale, Pickaxe,
+  Users, Filter, Sliders,
 } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
 import { useWallet } from '../hooks/useWallet'
@@ -19,6 +20,7 @@ function truncate(s: string, n = 20) {
 }
 
 type Tab = 'blocks' | 'state'
+type ParamsTab = 'rules' | 'txFilters' | 'actionFilters'
 
 // ============================================================
 // Chain Rules
@@ -96,6 +98,70 @@ function ChainRules({ spec, height }: { spec: ChainSpec; height: number }) {
           {sub && <div className="text-[10px] text-zinc-600 mt-0.5">{sub}</div>}
         </div>
       ))}
+    </div>
+  )
+}
+
+function FilterList({ filters, emptyMessage }: { filters: string[]; emptyMessage: string }) {
+  if (filters.length === 0) {
+    return <div className="text-xs text-zinc-600 italic px-1 py-2">{emptyMessage}</div>
+  }
+  return (
+    <div className="space-y-2">
+      {filters.map((src, i) => (
+        <pre
+          key={i}
+          className="bg-zinc-950/60 border border-zinc-800/60 rounded-lg px-3 py-2 text-[11px] font-mono text-zinc-300 whitespace-pre-wrap break-all overflow-x-auto"
+        >
+          {src}
+        </pre>
+      ))}
+    </div>
+  )
+}
+
+function ChainParameters({ spec, height }: { spec: ChainSpec; height: number }) {
+  const [tab, setTab] = useState<ParamsTab>('rules')
+  const txFilters = spec.transactionFilters ?? []
+  const actionFilters = spec.actionFilters ?? []
+
+  const tabs: { key: ParamsTab; label: string; count?: number; icon: typeof Box }[] = [
+    { key: 'rules', label: 'Rules', icon: Sliders },
+    { key: 'txFilters', label: 'Tx Filters', count: txFilters.length, icon: Filter },
+    { key: 'actionFilters', label: 'Action Filters', count: actionFilters.length, icon: Filter },
+  ]
+
+  return (
+    <div className="bg-zinc-900/80 rounded-2xl overflow-hidden">
+      <div className="flex items-center gap-1 px-3 pt-3 border-b border-zinc-800/60">
+        {tabs.map(({ key, label, count, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t-lg transition-colors ${
+              tab === key
+                ? 'text-zinc-100 bg-zinc-800/60'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <Icon size={12} /> {label}
+            {count !== undefined && (
+              <span className={`tabular-nums text-[10px] ${tab === key ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                {count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div className="p-4">
+        {tab === 'rules' && <ChainRules spec={spec} height={height} />}
+        {tab === 'txFilters' && (
+          <FilterList filters={txFilters} emptyMessage="No filters — all valid transactions accepted" />
+        )}
+        {tab === 'actionFilters' && (
+          <FilterList filters={actionFilters} emptyMessage="No filters — all valid actions accepted" />
+        )}
+      </div>
     </div>
   )
 }
@@ -601,10 +667,32 @@ function TxBadges({ tx }: { tx: BlockTransactionSummary }) {
 }
 
 // ============================================================
-// Main Dashboard
+// Main Explorer
 // ============================================================
 
-export function Dashboard() {
+function StatTile({
+  icon: Icon, label, value, sub, accent,
+}: { icon: typeof Box; label: string; value: string; sub?: string; accent?: string }) {
+  return (
+    <div className="bg-zinc-900/60 rounded-xl px-3 py-3 border border-zinc-800/40 min-w-0">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <Icon size={11} className={accent ?? 'text-zinc-500'} />
+        <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider">{label}</span>
+      </div>
+      <div className="text-sm font-semibold text-zinc-100 tabular-nums truncate">{value}</div>
+      {sub && <div className="text-[10px] text-zinc-600 mt-0.5 truncate">{sub}</div>}
+    </div>
+  )
+}
+
+function formatAge(ms: number): string {
+  if (ms < 0) return 'now'
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`
+  return `${Math.floor(ms / 3_600_000)}h ago`
+}
+
+export function Explorer() {
   const { chains, peers, connected, selectedChain, setSelectedChain, error } = useNode()
   const { activeAccount } = useWallet()
   const [latestBlock, setLatestBlock] = useState<BlockInfo | null>(null)
@@ -698,53 +786,65 @@ export function Dashboard() {
   }
 
   const totalBalance = Object.values(chainBalances).reduce((a, b) => a + b, 0)
-  const blockTime = latestBlock?.timestamp
-    ? new Date(latestBlock.timestamp).toLocaleTimeString()
+  const lastBlockAge = latestBlock?.timestamp
+    ? formatAge(Date.now() - latestBlock.timestamp)
     : null
+  const targetBlockSecs = spec ? spec.targetBlockTime / 1000 : null
+  const statusLabel = chain?.syncing
+    ? 'Syncing'
+    : chain?.mining
+      ? 'Mining'
+      : 'Synced'
+  const statusColor = chain?.syncing
+    ? 'text-yellow-400'
+    : chain?.mining
+      ? 'text-emerald-400'
+      : 'text-zinc-400'
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
       {/* Hero banner */}
-      <div className="bg-gradient-to-br from-lattice-900/40 via-zinc-900/80 to-zinc-900/80 rounded-2xl p-5 border border-lattice-800/20">
-        <div className="flex items-center justify-between mb-4">
-          <div>
+      <div className="bg-gradient-to-br from-lattice-900/40 via-zinc-900/80 to-zinc-900/80 rounded-2xl p-5 border border-lattice-800/20 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold">{selectedChain}</h1>
             <div className="flex items-center gap-2 mt-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-xs text-zinc-500">
-                Block #{chain?.height.toLocaleString() ?? '0'}
-                {chain?.mining && <span className="text-emerald-400 ml-2">Mining</span>}
-                {chain?.syncing && <span className="text-yellow-400 ml-2">Syncing</span>}
+              <span className={`w-1.5 h-1.5 rounded-full ${chain?.syncing ? 'bg-yellow-400' : 'bg-emerald-400'} animate-pulse`} />
+              <span className={`text-xs font-medium ${statusColor}`}>{statusLabel}</span>
+              <span className="text-zinc-700">·</span>
+              <span className="text-xs text-zinc-500 font-mono">
+                #{chain?.height.toLocaleString() ?? '0'}
               </span>
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-xs text-zinc-500">Peers</div>
-            <div className="text-lg font-bold">{peers?.count ?? 0}</div>
-          </div>
         </div>
 
-        {/* Inline stats row */}
-        <div className="flex gap-4 text-xs">
-          <div className="flex items-center gap-1.5 text-zinc-400">
-            <ArrowUpDown size={11} />
-            <span className="text-zinc-500">Mempool</span>
-            <span className="font-medium text-zinc-300">{chain?.mempoolCount ?? 0}</span>
-          </div>
-          {blockTime && (
-            <div className="flex items-center gap-1.5 text-zinc-400">
-              <Clock size={11} />
-              <span className="text-zinc-500">Last block</span>
-              <span className="font-medium text-zinc-300">{blockTime}</span>
-            </div>
-          )}
-          {fee && (
-            <div className="flex items-center gap-1.5 text-zinc-400">
-              <TrendingUp size={11} />
-              <span className="text-zinc-500">Fee</span>
-              <span className="font-medium text-zinc-300">{fee.fee.toLocaleString()}</span>
-            </div>
-          )}
+        {/* Live stats grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          <StatTile
+            icon={Users}
+            label="Peers"
+            value={(peers?.count ?? 0).toLocaleString()}
+            accent="text-lattice-400"
+          />
+          <StatTile
+            icon={Layers}
+            label="Mempool"
+            value={(chain?.mempoolCount ?? 0).toLocaleString()}
+            sub="pending txs"
+          />
+          <StatTile
+            icon={TrendingUp}
+            label="Fee"
+            value={fee ? fee.fee.toLocaleString() : '—'}
+            sub="est. for 5 blks"
+          />
+          <StatTile
+            icon={Clock}
+            label="Last block"
+            value={lastBlockAge ?? '—'}
+            sub={targetBlockSecs ? `target ${targetBlockSecs}s` : undefined}
+          />
         </div>
       </div>
 
@@ -770,6 +870,9 @@ export function Dashboard() {
         </div>
       )}
 
+      {/* Chain specification & filters */}
+      {spec && <ChainParameters spec={spec} height={chain?.height ?? 0} />}
+
       {/* Portfolio card */}
       {activeAccount && (
         <div className="bg-zinc-900/80 rounded-2xl p-5">
@@ -787,9 +890,6 @@ export function Dashboard() {
           )}
         </div>
       )}
-
-      {/* Chain rules */}
-      {spec && <ChainRules spec={spec} height={chain?.height ?? 0} />}
 
       {/* Explorer section */}
       <div>

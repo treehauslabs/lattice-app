@@ -10,11 +10,15 @@ interface WalletState {
   accounts: StoredAccount[]
   activeAccount: StoredAccount | null
   activeIndex: number
+  minerAccount: StoredAccount | null
+  minerIndex: number
   setActiveIndex: (i: number) => void
-  createAccount: (name: string, password: string) => Promise<void>
-  importAccount: (name: string, privateKeyHex: string, password: string) => Promise<void>
+  createAccount: (name: string, password: string, opts?: { isMiner?: boolean }) => Promise<void>
+  createMinerAccount: (password: string) => Promise<void>
+  importAccount: (name: string, privateKeyHex: string, password: string, opts?: { isMiner?: boolean }) => Promise<void>
   deleteAccount: (index: number) => void
   unlock: (password: string) => Promise<string>
+  unlockAt: (index: number, password: string) => Promise<string>
   locked: boolean
   lock: () => void
 }
@@ -27,7 +31,7 @@ export function useWalletProvider(): WalletState {
 
   useEffect(() => { saveKeystore(state) }, [state])
 
-  const createAccount = useCallback(async (name: string, password: string) => {
+  const createAccount = useCallback(async (name: string, password: string, opts?: { isMiner?: boolean }) => {
     const { privateKey, publicKey } = generateKeyPair()
     const address = computeAddress(publicKey)
     const encrypted = await encryptPrivateKey(privateKey, password)
@@ -37,11 +41,16 @@ export function useWalletProvider(): WalletState {
       address,
       encrypted,
       createdAt: Date.now(),
+      ...(opts?.isMiner ? { isMiner: true } : {}),
     }
     setState(prev => addAccount(prev, account))
   }, [])
 
-  const importAccount = useCallback(async (name: string, privateKeyHex: string, password: string) => {
+  const createMinerAccount = useCallback(async (password: string) => {
+    await createAccount('Miner', password, { isMiner: true })
+  }, [createAccount])
+
+  const importAccount = useCallback(async (name: string, privateKeyHex: string, password: string, opts?: { isMiner?: boolean }) => {
     const publicKey = publicKeyFromPrivate(privateKeyHex)
     const address = computeAddress(publicKey)
     const encrypted = await encryptPrivateKey(privateKeyHex, password)
@@ -51,8 +60,14 @@ export function useWalletProvider(): WalletState {
       address,
       encrypted,
       createdAt: Date.now(),
+      ...(opts?.isMiner ? { isMiner: true } : {}),
     }
-    setState(prev => addAccount(prev, account))
+    setState(prev => {
+      const cleared = opts?.isMiner
+        ? { ...prev, accounts: prev.accounts.map(a => a.isMiner ? { ...a, isMiner: false } : a) }
+        : prev
+      return addAccount(cleared, account)
+    })
   }, [])
 
   const deleteAccount = useCallback((index: number) => {
@@ -73,17 +88,29 @@ export function useWalletProvider(): WalletState {
     return key
   }, [state.accounts, state.activeIndex])
 
+  const unlockAt = useCallback(async (index: number, password: string): Promise<string> => {
+    const account = state.accounts[index]
+    if (!account) throw new Error('Account not found')
+    return decryptPrivateKey(account.encrypted, password)
+  }, [state.accounts])
+
   const lock = useCallback(() => { setUnlockedKey(null) }, [])
+
+  const minerIndex = state.accounts.findIndex(a => a.isMiner)
 
   return {
     accounts: state.accounts,
     activeAccount: state.activeIndex >= 0 ? state.accounts[state.activeIndex] : null,
     activeIndex: state.activeIndex,
+    minerAccount: minerIndex >= 0 ? state.accounts[minerIndex] : null,
+    minerIndex,
     setActiveIndex,
     createAccount,
+    createMinerAccount,
     importAccount,
     deleteAccount,
     unlock,
+    unlockAt,
     locked: unlockedKey === null,
     lock,
   }
