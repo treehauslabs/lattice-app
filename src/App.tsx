@@ -4,6 +4,7 @@ import { Explorer } from './pages/Explorer'
 import { WalletPage } from './pages/Wallet'
 import { Trading } from './pages/Trading'
 import { NodeControl } from './pages/NodeControl'
+import { Foundry } from './pages/Foundry'
 import { SettingsPage } from './pages/Settings'
 import { NodeProvider, useNodeProvider } from './hooks/useNode'
 import { WalletProvider, useWalletProvider } from './hooks/useWallet'
@@ -44,6 +45,7 @@ export function App() {
           <Route path="wallet" element={<WalletPage />} />
           <Route path="trading" element={<Trading />} />
           <Route path="node" element={<NodeControl />} />
+          <Route path="foundry" element={<Foundry />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Routes>

@@ -25,6 +25,8 @@ import type {
   DepositsListResponse,
   BlockStateResponse,
   BlockAccountStateResponse,
+  DeployChainRequest,
+  DeployChainResponse,
 } from './types'
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
@@ -183,6 +185,13 @@ class LatticeClient {
     return this.fetch('/api/mining/stop', {
       method: 'POST',
       body: JSON.stringify({ chain }),
+    })
+  }
+
+  async deployChain(body: DeployChainRequest): Promise<DeployChainResponse> {
+    return this.fetch('/api/chain/deploy', {
+      method: 'POST',
+      body: JSON.stringify(body),
     })
   }
 

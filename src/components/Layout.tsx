@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Compass, Wallet, ArrowLeftRight, Server, Settings, Pickaxe, Activity } from 'lucide-react'
+import { Compass, Wallet, ArrowLeftRight, Server, Settings, Pickaxe, Activity, Hammer } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
 
 const nav = [
@@ -7,6 +7,7 @@ const nav = [
   { to: '/wallet', icon: Wallet, label: 'Wallet' },
   { to: '/trading', icon: ArrowLeftRight, label: 'Exchange' },
   { to: '/node', icon: Server, label: 'Node' },
+  { to: '/foundry', icon: Hammer, label: 'Foundry' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 

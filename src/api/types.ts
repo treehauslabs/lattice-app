@@ -271,3 +271,29 @@ export interface DepositsListResponse {
   count: number
   chain: string
 }
+
+export interface DeployChainRequest {
+  directory: string
+  parentDirectory: string
+  targetBlockTime: number
+  initialReward: number
+  halvingInterval: number
+  premine: number
+  maxTransactionsPerBlock: number
+  maxStateGrowth: number
+  maxBlockSize: number
+  difficultyAdjustmentWindow: number
+  transactionFilters: string[]
+  actionFilters: string[]
+  premineRecipient?: string
+  startMining?: boolean
+  minerPublicKey?: string
+  minerPrivateKey?: string
+}
+
+export interface DeployChainResponse {
+  directory: string
+  parentDirectory: string
+  genesisHash: string
+  mining: boolean
+}
