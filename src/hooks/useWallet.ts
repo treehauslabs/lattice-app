@@ -26,7 +26,17 @@ interface WalletState {
 const WalletContext = createContext<WalletState | null>(null)
 
 export function useWalletProvider(): WalletState {
-  const [state, setState] = useState<KeystoreState>(loadKeystore)
+  const [state, setState] = useState<KeystoreState>(() => {
+    const loaded = loadKeystore()
+    let changed = false
+    const accounts = loaded.accounts.map(a => {
+      const correct = computeAddress(a.publicKey)
+      if (a.address === correct) return a
+      changed = true
+      return { ...a, address: correct }
+    })
+    return changed ? { ...loaded, accounts } : loaded
+  })
   const [unlockedKey, setUnlockedKey] = useState<string | null>(null)
 
   useEffect(() => { saveKeystore(state) }, [state])
