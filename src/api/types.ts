@@ -1,5 +1,6 @@
 export interface ChainStatus {
   directory: string
+  parentDirectory: string | null
   height: number
   tip: string
   mining: boolean

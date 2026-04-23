@@ -112,6 +112,33 @@ const PRESETS: Record<PresetKey, { label: string; icon: typeof Zap; tagline: str
   },
 }
 
+/// Sort chains into a depth-first traversal order where each row carries its
+/// nesting depth. Orphans (chains whose parent isn't in the set) appear at
+/// depth 0 after nexus so operators can still target them.
+function buildChainHierarchy(
+  chains: Array<{ directory: string; parentDirectory: string | null }>,
+  nexusName: string
+): Array<{ directory: string; depth: number }> {
+  const byParent = new Map<string, string[]>()
+  const known = new Set(chains.map(c => c.directory))
+  for (const c of chains) {
+    if (c.directory === nexusName) continue
+    const parent = c.parentDirectory && known.has(c.parentDirectory) ? c.parentDirectory : nexusName
+    const siblings = byParent.get(parent) ?? []
+    siblings.push(c.directory)
+    byParent.set(parent, siblings)
+  }
+  const result: Array<{ directory: string; depth: number }> = []
+  const walk = (dir: string, depth: number) => {
+    result.push({ directory: dir, depth })
+    const kids = byParent.get(dir) ?? []
+    kids.sort()
+    for (const k of kids) walk(k, depth + 1)
+  }
+  walk(nexusName, 0)
+  return result
+}
+
 function emptyDraft(parent: string): ChainDraft {
   return {
     directory: '',
@@ -502,13 +529,17 @@ export function Foundry() {
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500 placeholder:text-zinc-600"
                 />
               </Field>
-              <Field label="Parent chain" hint="Child inherits security via merged mining">
+              <Field label="Parent chain" hint="Child inherits security via merged mining. Any chain can anchor a new chain — pick a child or grandchild to nest deeper.">
                 <select
                   value={draft.parentDirectory}
                   onChange={e => update({ parentDirectory: e.target.value })}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500"
                 >
-                  <option value={nexusName}>{nexusName}</option>
+                  {buildChainHierarchy(chains, nexusName).map(({ directory, depth }) => (
+                    <option key={directory} value={directory}>
+                      {' '.repeat(depth) + (depth > 0 ? '↳ ' : '') + directory}
+                    </option>
+                  ))}
                 </select>
               </Field>
             </div>
