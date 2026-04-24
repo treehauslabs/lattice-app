@@ -6,11 +6,13 @@ import {
   Timer, Coins, BarChart3, Gauge, HardDrive, Scale, Pickaxe,
   Users, Filter, Sliders,
 } from 'lucide-react'
+import { useQueries } from '@tanstack/react-query'
 import { useNode } from '../hooks/useNode'
 import { useWallet } from '../hooks/useWallet'
 import { lattice } from '../api/client'
+import { qk, useFeeEstimate, useLatestBlock } from '../hooks/queries'
 import type {
-  BlockInfo, FeeEstimate, ChainSpec, TransactionDetail,
+  BlockInfo, ChainSpec, TransactionDetail,
   BlockTransactionSummary, ChildBlockEntry, FinalityResponse,
   AccountStateResponse, BlockStateResponse, BlockAccountStateResponse,
 } from '../api/types'
@@ -695,10 +697,24 @@ function formatAge(ms: number): string {
 export function Explorer() {
   const { chains, peers, connected, selectedChain, setSelectedChain, error } = useNode()
   const { activeAccount } = useWallet()
-  const [latestBlock, setLatestBlock] = useState<BlockInfo | null>(null)
-  const [fee, setFee] = useState<FeeEstimate | null>(null)
-  const [chainBalances, setChainBalances] = useState<Record<string, number>>({})
+  const latestBlockQ = useLatestBlock(selectedChain)
+  const feeQ = useFeeEstimate(5, selectedChain)
+  const latestBlock = latestBlockQ.data ?? null
+  const fee = feeQ.data ?? null
   const [spec, setSpec] = useState<ChainSpec | null>(null)
+
+  const balanceQueries = useQueries({
+    queries: chains.map(c => ({
+      queryKey: qk.balance(activeAccount?.address, c.directory),
+      queryFn: async () => (await lattice.getBalance(activeAccount!.address, c.directory)).balance,
+      enabled: connected && !!activeAccount?.address,
+      staleTime: Infinity,
+    })),
+  })
+  const chainBalances: Record<string, number> = {}
+  chains.forEach((c, idx) => {
+    chainBalances[c.directory] = balanceQueries[idx]?.data ?? 0
+  })
 
   // Explorer state
   const [blocks, setBlocks] = useState<BlockInfo[]>([])
@@ -713,27 +729,8 @@ export function Explorer() {
 
   useEffect(() => {
     if (!connected) return
-    lattice.getLatestBlock(selectedChain).then(setLatestBlock).catch(() => {})
-    lattice.getFeeEstimate(5, selectedChain).then(setFee).catch(() => {})
     lattice.getChainSpec(selectedChain).then(setSpec).catch(() => {})
-  }, [connected, selectedChain, chain?.height])
-
-  useEffect(() => {
-    if (!connected || !activeAccount) return
-    const fetchBalances = async () => {
-      const results: Record<string, number> = {}
-      for (const c of chains) {
-        try {
-          const b = await lattice.getBalance(activeAccount.address, c.directory)
-          results[c.directory] = b.balance
-        } catch {
-          results[c.directory] = 0
-        }
-      }
-      setChainBalances(results)
-    }
-    fetchBalances()
-  }, [connected, chains.length, activeAccount?.address])
+  }, [connected, selectedChain])
 
   const loadBlocks = useCallback(async () => {
     if (!connected) return

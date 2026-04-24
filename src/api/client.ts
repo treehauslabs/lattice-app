@@ -58,6 +58,14 @@ class LatticeClient {
     this.authToken = token
   }
 
+  getBaseUrl(): string {
+    return this.baseUrl
+  }
+
+  getAuthToken(): string | null {
+    return this.authToken
+  }
+
   private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

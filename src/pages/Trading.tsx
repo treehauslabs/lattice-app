@@ -1,13 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ArrowDownUp, Copy, Check, Loader2, CheckCircle2,
   Clock, AlertCircle, X, RefreshCw, ChevronRight,
   ShoppingCart, Tag, Wallet,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNode } from '../hooks/useNode'
 import { useWallet } from '../hooks/useWallet'
 import { lattice } from '../api/client'
 import { buildDeposit, buildReceipt, buildWithdrawal } from '../wallet/transaction'
+import { qk, useBalance, useDeposits, useFeeEstimate } from '../hooks/queries'
 import type { DepositEntry } from '../api/types'
 
 // ============================================================
@@ -19,7 +21,6 @@ export function Trading() {
   const { activeAccount } = useWallet()
   const [tab, setTab] = useState<'trade' | 'orders'>('trade')
   const [side, setSide] = useState<'buy' | 'sell'>('buy')
-  const [balances, setBalances] = useState<Record<string, number>>({})
   const [fillDeposit, setFillDeposit] = useState<DepositEntry | null>(null)
   const [showSellConfirm, setShowSellConfirm] = useState<{ amount: number; fee: number } | null>(null)
 
@@ -28,23 +29,8 @@ export function Trading() {
   const childChains = chainDirs.filter(c => c !== nexus)
   const activeChild = childChains.includes(selectedChain) ? selectedChain : childChains[0] ?? ''
 
-  const refreshBalances = useCallback(async () => {
-    if (!connected || !activeAccount) return
-    const results: Record<string, number> = {}
-    for (const c of chains) {
-      try {
-        const b = await lattice.getBalance(activeAccount.address, c.directory)
-        results[c.directory] = b.balance
-      } catch { results[c.directory] = 0 }
-    }
-    setBalances(results)
-  }, [connected, activeAccount?.address, chains.length])
-
-  useEffect(() => {
-    refreshBalances()
-    const iv = setInterval(refreshBalances, 8000)
-    return () => clearInterval(iv)
-  }, [refreshBalances])
+  const nexusBalanceQ = useBalance(activeAccount?.address, nexus)
+  const childBalanceQ = useBalance(activeAccount?.address, activeChild)
 
   if (!connected) {
     return (
@@ -60,8 +46,8 @@ export function Trading() {
     )
   }
 
-  const nexusBalance = balances[nexus] ?? 0
-  const childBalance = balances[activeChild] ?? 0
+  const nexusBalance = nexusBalanceQ.data ?? 0
+  const childBalance = childBalanceQ.data ?? 0
 
   return (
     <div className="p-6 max-w-lg mx-auto">
@@ -165,7 +151,7 @@ export function Trading() {
           nexus={nexus}
           nexusBalance={nexusBalance}
           onClose={() => setFillDeposit(null)}
-          onComplete={() => { setFillDeposit(null); refreshBalances() }}
+          onComplete={() => setFillDeposit(null)}
         />
       )}
 
@@ -177,7 +163,7 @@ export function Trading() {
           chain={activeChild}
           nexus={nexus}
           onClose={() => setShowSellConfirm(null)}
-          onComplete={() => { setShowSellConfirm(null); refreshBalances() }}
+          onComplete={() => setShowSellConfirm(null)}
         />
       )}
     </div>
@@ -191,24 +177,9 @@ export function Trading() {
 function BuyView({ chain, nexusBalance, onFill, hasWallet }: {
   chain: string; nexusBalance: number; onFill: (d: DepositEntry) => void; hasWallet: boolean
 }) {
-  const [deposits, setDeposits] = useState<DepositEntry[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const fetchDeposits = useCallback(async () => {
-    try {
-      const resp = await lattice.listDeposits(chain)
-      const sorted = [...resp.deposits].sort((a, b) => a.amountDemanded - b.amountDemanded)
-      setDeposits(sorted)
-    } catch { setDeposits([]) }
-    setLoading(false)
-  }, [chain])
-
-  useEffect(() => {
-    setLoading(true)
-    fetchDeposits()
-    const iv = setInterval(fetchDeposits, 10000)
-    return () => clearInterval(iv)
-  }, [fetchDeposits])
+  const depositsQ = useDeposits(chain)
+  const deposits = (depositsQ.data?.deposits ?? []).slice().sort((a, b) => a.amountDemanded - b.amountDemanded)
+  const loading = depositsQ.isLoading
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
@@ -218,8 +189,8 @@ function BuyView({ chain, nexusBalance, onFill, hasWallet }: {
           <span className="text-sm font-medium">Available Orders</span>
           <span className="text-xs text-zinc-500">({deposits.length})</span>
         </div>
-        <button onClick={fetchDeposits} className="text-zinc-500 hover:text-zinc-300 transition-colors">
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+        <button onClick={() => depositsQ.refetch()} className="text-zinc-500 hover:text-zinc-300 transition-colors">
+          <RefreshCw size={12} className={depositsQ.isFetching ? 'animate-spin' : ''} />
         </button>
       </div>
 
@@ -278,16 +249,15 @@ function SellView({ chain, nexus, childBalance, hasWallet, onConfirm }: {
   chain: string; nexus: string; childBalance: number; hasWallet: boolean
   onConfirm: (params: { amount: number; fee: number }) => void
 }) {
+  const feeQ = useFeeEstimate(5, chain)
   const [amount, setAmount] = useState('')
   const [fee, setFee] = useState('')
-  const [feeLoading, setFeeLoading] = useState(true)
+  const feeLoading = feeQ.isLoading
 
   useEffect(() => {
-    lattice.getFeeEstimate(5, chain)
-      .then(est => setFee(String(est.fee)))
-      .catch(() => setFee('100'))
-      .finally(() => setFeeLoading(false))
-  }, [chain])
+    if (feeQ.data) setFee(String(feeQ.data.fee))
+    else if (feeQ.isError) setFee('100')
+  }, [feeQ.data, feeQ.isError])
 
   const amountNum = parseInt(amount) || 0
   const feeNum = parseInt(fee) || 0
@@ -377,6 +347,7 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
   onClose: () => void; onComplete: () => void
 }) {
   const { activeAccount, unlock } = useWallet()
+  const queryClient = useQueryClient()
   const [step, setStep] = useState<FillStep>('review')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -410,6 +381,8 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
       }, privateKey)
       const receiptResp = await lattice.submitTransaction(receiptSigned, nexus)
       if (!receiptResp.accepted) throw new Error(receiptResp.error || 'Receipt rejected')
+      queryClient.invalidateQueries({ queryKey: qk.mempool(nexus) })
+      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, nexus) })
       setProgress(p => ({ ...p, receipt: true }))
 
       // Step 2: Wait briefly for receipt to propagate, then withdraw
@@ -430,6 +403,9 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
       }, privateKey)
       const withdrawResp = await lattice.submitTransaction(withdrawSigned, chain)
       if (!withdrawResp.accepted) throw new Error(withdrawResp.error || 'Withdrawal rejected')
+      queryClient.invalidateQueries({ queryKey: qk.mempool(chain) })
+      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, chain) })
+      queryClient.invalidateQueries({ queryKey: qk.deposits(chain) })
       setProgress(p => ({ ...p, withdrawal: true }))
 
       // Save to history
@@ -579,6 +555,7 @@ function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
   onClose: () => void; onComplete: () => void
 }) {
   const { activeAccount, unlock } = useWallet()
+  const queryClient = useQueryClient()
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [step, setStep] = useState<'confirm' | 'executing' | 'done'>('confirm')
@@ -605,6 +582,9 @@ function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
       }, privateKey)
       const resp = await lattice.submitTransaction(signed, chain)
       if (!resp.accepted) throw new Error(resp.error || 'Transaction rejected')
+      queryClient.invalidateQueries({ queryKey: qk.mempool(chain) })
+      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, chain) })
+      queryClient.invalidateQueries({ queryKey: qk.deposits(chain) })
 
       setOfferNonce(swapNonce)
       saveOrder({
@@ -874,6 +854,7 @@ function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
   onClose: () => void; onComplete: (claimTxCID: string) => void
 }) {
   const { activeAccount, unlock } = useWallet()
+  const queryClient = useQueryClient()
   const [step, setStep] = useState<'review' | 'executing' | 'done'>('review')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -904,6 +885,8 @@ function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
 
       const resp = await lattice.submitTransaction(withdrawSigned, nexus)
       if (!resp.accepted) throw new Error(resp.error || 'Claim rejected')
+      queryClient.invalidateQueries({ queryKey: qk.mempool(nexus) })
+      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, nexus) })
 
       setClaimTxCID(resp.txCID)
       setStep('done')

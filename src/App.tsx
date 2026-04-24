@@ -11,6 +11,12 @@ import { WalletProvider, useWalletProvider } from './hooks/useWallet'
 import { useEffect } from 'react'
 import { lattice } from './api/client'
 import { bootstrapFromTauri, isTauri } from './tauri/bootstrap'
+import { useNodeEvents } from './realtime/useNodeEvents'
+
+function RealtimeMount() {
+  useNodeEvents()
+  return null
+}
 
 function AppProviders({ children }: { children: React.ReactNode }) {
   const node = useNodeProvider()
@@ -30,6 +36,7 @@ function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <NodeProvider value={node}>
       <WalletProvider value={wallet}>
+        <RealtimeMount />
         {children}
       </WalletProvider>
     </NodeProvider>

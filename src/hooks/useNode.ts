@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, createContext, useContext } from 'react'
-import { lattice } from '../api/client'
+import { useCallback, useState, createContext, useContext } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { ChainStatus, PeersResponse } from '../api/types'
+import { qk, useChainsInfo, usePeers } from './queries'
 
 interface NodeState {
   connected: boolean
@@ -17,39 +18,35 @@ interface NodeState {
 const NodeContext = createContext<NodeState | null>(null)
 
 export function useNodeProvider(): NodeState {
-  const [connected, setConnected] = useState(false)
-  const [chains, setChains] = useState<ChainStatus[]>([])
-  const [peers, setPeers] = useState<PeersResponse | null>(null)
-  const [genesisHash, setGenesisHash] = useState('')
-  const [nexus, setNexus] = useState('Nexus')
-  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+  const chainsQuery = useChainsInfo()
+  const peersQuery = usePeers()
   const [selectedChain, setSelectedChain] = useState('Nexus')
 
+  const info = chainsQuery.data
+  const connected = !!info && !chainsQuery.isError
+  const error = chainsQuery.error instanceof Error
+    ? chainsQuery.error.message
+    : chainsQuery.isError ? 'Connection failed' : null
+
   const refresh = useCallback(async () => {
-    try {
-      const [info, peersData] = await Promise.all([
-        lattice.getChainInfo(),
-        lattice.getPeers(),
-      ])
-      setChains(info.chains)
-      setGenesisHash(info.genesisHash)
-      if (info.nexus) setNexus(info.nexus)
-      setPeers(peersData)
-      setConnected(true)
-      setError(null)
-    } catch (e) {
-      setConnected(false)
-      setError(e instanceof Error ? e.message : 'Connection failed')
-    }
-  }, [])
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.chainInfo }),
+      queryClient.invalidateQueries({ queryKey: qk.peers }),
+    ])
+  }, [queryClient])
 
-  useEffect(() => {
-    refresh()
-    const interval = setInterval(refresh, 5000)
-    return () => clearInterval(interval)
-  }, [refresh])
-
-  return { connected, chains, peers, genesisHash, nexus, error, refresh, selectedChain, setSelectedChain }
+  return {
+    connected,
+    chains: info?.chains ?? [],
+    peers: peersQuery.data ?? null,
+    genesisHash: info?.genesisHash ?? '',
+    nexus: info?.nexus ?? 'Nexus',
+    error,
+    refresh,
+    selectedChain,
+    setSelectedChain,
+  }
 }
 
 export const NodeProvider = NodeContext.Provider

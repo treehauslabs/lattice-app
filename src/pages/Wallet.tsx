@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Plus, Trash2, Copy, Send, Eye, EyeOff, Download, ChevronDown, ChevronUp, X, AlertCircle, CheckCircle2, Pickaxe, Server } from 'lucide-react'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
 import { useWallet } from '../hooks/useWallet'
 import { useNode } from '../hooks/useNode'
 import { lattice } from '../api/client'
@@ -7,6 +8,9 @@ import { submitTransfer } from '../wallet/transaction'
 import { parseIdentityFile, type ParsedIdentity } from '../wallet/identityFile'
 import { readNodeIdentity } from '../tauri/bootstrap'
 import { computeAddress } from '../wallet/signer'
+import { qk, useFeeEstimate } from '../hooks/queries'
+import type { ChainStatus } from '../api/types'
+import type { StoredAccount } from '../wallet/keystore'
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -290,6 +294,8 @@ function ImportNodeIdentityModal({
 
 function SendModal({ onClose, address, chain }: { onClose: () => void; address: string; chain: string }) {
   const { unlock, activeAccount } = useWallet()
+  const queryClient = useQueryClient()
+  const feeEstimate = useFeeEstimate(5, chain)
   const [to, setTo] = useState('')
   const [amount, setAmount] = useState('')
   const [fee, setFee] = useState('100')
@@ -299,10 +305,8 @@ function SendModal({ onClose, address, chain }: { onClose: () => void; address: 
   const [result, setResult] = useState<string | null>(null)
 
   useEffect(() => {
-    lattice.getFeeEstimate(5, chain)
-      .then(est => setFee(String(est.fee)))
-      .catch(() => {})
-  }, [chain])
+    if (feeEstimate.data) setFee(String(feeEstimate.data.fee))
+  }, [feeEstimate.data])
 
   const handleSend = async () => {
     if (!to.trim() || !amount.trim()) { setError('Fill all fields'); return }
@@ -323,8 +327,13 @@ function SendModal({ onClose, address, chain }: { onClose: () => void; address: 
         nonce: nonceResp.nonce,
         signerPublicKey: activeAccount!.publicKey,
       }, privateKey, chain)
-      if (resp.accepted) setResult(resp.txCID)
-      else setError(resp.error || 'Transaction rejected')
+      if (resp.accepted) {
+        queryClient.invalidateQueries({ queryKey: qk.mempool(chain) })
+        queryClient.invalidateQueries({ queryKey: qk.nonce(address, chain) })
+        setResult(resp.txCID)
+      } else {
+        setError(resp.error || 'Transaction rejected')
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to send')
     }
@@ -380,34 +389,11 @@ export function WalletPage() {
   const [showImportNode, setShowImportNode] = useState(false)
   const [showMinerSetup, setShowMinerSetup] = useState(false)
   const [showSend, setShowSend] = useState(false)
-  const [balances, setBalances] = useState<Record<string, Record<string, number>>>({})
   const [expandedAccount, setExpandedAccount] = useState<number | null>(null)
 
   useEffect(() => {
     if (accounts.length === 0 && minerIndex < 0) setShowMinerSetup(true)
   }, [accounts.length, minerIndex])
-
-  useEffect(() => {
-    if (!connected || accounts.length === 0) return
-    const fetchBalances = async () => {
-      const results: Record<string, Record<string, number>> = {}
-      for (const acc of accounts) {
-        results[acc.address] = {}
-        for (const c of chains) {
-          try {
-            const b = await lattice.getBalance(acc.address, c.directory)
-            results[acc.address][c.directory] = b.balance
-          } catch {
-            results[acc.address][c.directory] = 0
-          }
-        }
-      }
-      setBalances(results)
-    }
-    fetchBalances()
-    const interval = setInterval(fetchBalances, 10000)
-    return () => clearInterval(interval)
-  }, [connected, accounts, chains.length])
 
   return (
     <div className="p-6 max-w-lg mx-auto">
@@ -456,100 +442,20 @@ export function WalletPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {accounts.map((acc, i) => {
-            const accBalances = balances[acc.address] ?? {}
-            const totalBalance = Object.values(accBalances).reduce((a, b) => a + b, 0)
-            const isActive = i === activeIndex
-            const isExpanded = expandedAccount === i
-
-            return (
-              <div
-                key={acc.publicKey}
-                className={`bg-zinc-900/80 rounded-xl overflow-hidden transition-colors ${
-                  isActive ? 'ring-1 ring-lattice-600/30' : ''
-                }`}
-              >
-                {/* Main row */}
-                <button
-                  onClick={() => { setActiveIndex(i); setExpandedAccount(isExpanded ? null : i) }}
-                  className="w-full text-left px-4 py-4 flex items-center justify-between"
-                >
-                  <div>
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="font-semibold text-sm">{acc.name}</span>
-                      {acc.isMiner && (
-                        <span className="text-[10px] bg-emerald-600/15 text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1">
-                          <Pickaxe size={9} /> Miner
-                        </span>
-                      )}
-                      {isActive && <span className="text-[10px] bg-lattice-600/15 text-lattice-400 px-1.5 py-0.5 rounded">Active</span>}
-                    </div>
-                    <div className="text-xs text-zinc-500 font-mono">{acc.address.slice(0, 20)}...</div>
-                  </div>
-                  <div className="text-right flex items-center gap-3">
-                    {connected && (
-                      <div>
-                        <div className="text-lg font-bold tabular-nums">{totalBalance.toLocaleString()}</div>
-                        <div className="text-[11px] text-zinc-500">across {chains.length} chains</div>
-                      </div>
-                    )}
-                    {isExpanded ? <ChevronUp size={16} className="text-zinc-500" /> : <ChevronDown size={16} className="text-zinc-500" />}
-                  </div>
-                </button>
-
-                {/* Expanded details */}
-                {isExpanded && (
-                  <div className="px-4 pb-4 space-y-3">
-                    {/* Chain balances */}
-                    {connected && chains.length > 0 && (
-                      <div className="bg-zinc-800/40 rounded-lg divide-y divide-zinc-800/50">
-                        {chains.map(c => (
-                          <div key={c.directory} className="flex items-center justify-between px-3 py-2.5 text-sm">
-                            <span className={c.directory === selectedChain ? 'text-lattice-400 font-medium' : 'text-zinc-400'}>
-                              {c.directory}
-                            </span>
-                            <span className="font-medium tabular-nums">{(accBalances[c.directory] ?? 0).toLocaleString()}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Keys */}
-                    <div className="space-y-1.5 text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="text-zinc-500 w-14">Address</span>
-                        <span className="font-mono text-zinc-400 break-all flex-1">{acc.address}</span>
-                        <CopyButton text={acc.address} />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-zinc-500 w-14">Key</span>
-                        <span className="font-mono text-zinc-400 break-all flex-1">{acc.publicKey}</span>
-                        <CopyButton text={acc.publicKey} />
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-2">
-                      {connected && (
-                        <button
-                          onClick={e => { e.stopPropagation(); setShowSend(true) }}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-lattice-600 hover:bg-lattice-500 rounded-xl text-xs font-semibold transition-colors"
-                        >
-                          <Send size={12} /> Send
-                        </button>
-                      )}
-                      <button
-                        onClick={e => { e.stopPropagation(); if (confirm('Delete this account? This cannot be undone.')) deleteAccount(i) }}
-                        className="px-4 py-2.5 bg-zinc-800 hover:bg-red-600/10 hover:text-red-400 rounded-xl text-xs transition-colors text-zinc-400"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )
-          })}
+          {accounts.map((acc, i) => (
+            <AccountCard
+              key={acc.publicKey}
+              account={acc}
+              chains={chains}
+              connected={connected}
+              selectedChain={selectedChain}
+              isActive={i === activeIndex}
+              isExpanded={expandedAccount === i}
+              onToggle={() => { setActiveIndex(i); setExpandedAccount(expandedAccount === i ? null : i) }}
+              onSend={() => setShowSend(true)}
+              onDelete={() => { if (confirm('Delete this account? This cannot be undone.')) deleteAccount(i) }}
+            />
+          ))}
         </div>
       )}
 
@@ -558,6 +464,122 @@ export function WalletPage() {
       {showImportNode && <ImportNodeIdentityModal onClose={() => setShowImportNode(false)} onImport={importAccount} />}
       {showMinerSetup && <CreateMinerAccountModal onClose={() => setShowMinerSetup(false)} onCreate={createMinerAccount} onImport={importAccount} />}
       {showSend && activeAccount && <SendModal onClose={() => setShowSend(false)} address={activeAccount.address} chain={selectedChain} />}
+    </div>
+  )
+}
+
+function AccountCard({
+  account,
+  chains,
+  connected,
+  selectedChain,
+  isActive,
+  isExpanded,
+  onToggle,
+  onSend,
+  onDelete,
+}: {
+  account: StoredAccount
+  chains: ChainStatus[]
+  connected: boolean
+  selectedChain: string
+  isActive: boolean
+  isExpanded: boolean
+  onToggle: () => void
+  onSend: () => void
+  onDelete: () => void
+}) {
+  const balanceQueries = useQueries({
+    queries: chains.map(c => ({
+      queryKey: qk.balance(account.address, c.directory),
+      queryFn: async () => (await lattice.getBalance(account.address, c.directory)).balance,
+      enabled: connected && !!account.address,
+      staleTime: Infinity,
+    })),
+  })
+
+  const balancesByChain: Record<string, number> = {}
+  chains.forEach((c, idx) => {
+    balancesByChain[c.directory] = balanceQueries[idx]?.data ?? 0
+  })
+  const totalBalance = Object.values(balancesByChain).reduce((a, b) => a + b, 0)
+
+  return (
+    <div
+      className={`bg-zinc-900/80 rounded-xl overflow-hidden transition-colors ${
+        isActive ? 'ring-1 ring-lattice-600/30' : ''
+      }`}
+    >
+      <button onClick={onToggle} className="w-full text-left px-4 py-4 flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="font-semibold text-sm">{account.name}</span>
+            {account.isMiner && (
+              <span className="text-[10px] bg-emerald-600/15 text-emerald-400 px-1.5 py-0.5 rounded flex items-center gap-1">
+                <Pickaxe size={9} /> Miner
+              </span>
+            )}
+            {isActive && <span className="text-[10px] bg-lattice-600/15 text-lattice-400 px-1.5 py-0.5 rounded">Active</span>}
+          </div>
+          <div className="text-xs text-zinc-500 font-mono">{account.address.slice(0, 20)}...</div>
+        </div>
+        <div className="text-right flex items-center gap-3">
+          {connected && (
+            <div>
+              <div className="text-lg font-bold tabular-nums">{totalBalance.toLocaleString()}</div>
+              <div className="text-[11px] text-zinc-500">across {chains.length} chains</div>
+            </div>
+          )}
+          {isExpanded ? <ChevronUp size={16} className="text-zinc-500" /> : <ChevronDown size={16} className="text-zinc-500" />}
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="px-4 pb-4 space-y-3">
+          {connected && chains.length > 0 && (
+            <div className="bg-zinc-800/40 rounded-lg divide-y divide-zinc-800/50">
+              {chains.map(c => (
+                <div key={c.directory} className="flex items-center justify-between px-3 py-2.5 text-sm">
+                  <span className={c.directory === selectedChain ? 'text-lattice-400 font-medium' : 'text-zinc-400'}>
+                    {c.directory}
+                  </span>
+                  <span className="font-medium tabular-nums">{(balancesByChain[c.directory] ?? 0).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-zinc-500 w-14">Address</span>
+              <span className="font-mono text-zinc-400 break-all flex-1">{account.address}</span>
+              <CopyButton text={account.address} />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-zinc-500 w-14">Key</span>
+              <span className="font-mono text-zinc-400 break-all flex-1">{account.publicKey}</span>
+              <CopyButton text={account.publicKey} />
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            {connected && (
+              <button
+                onClick={e => { e.stopPropagation(); onSend() }}
+                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-lattice-600 hover:bg-lattice-500 rounded-xl text-xs font-semibold transition-colors"
+              >
+                <Send size={12} /> Send
+              </button>
+            )}
+            <button
+              onClick={e => { e.stopPropagation(); onDelete() }}
+              className="px-4 py-2.5 bg-zinc-800 hover:bg-red-600/10 hover:text-red-400 rounded-xl text-xs transition-colors text-zinc-400"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
