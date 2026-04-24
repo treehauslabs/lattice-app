@@ -2,7 +2,9 @@ mod node;
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, State};
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::time::sleep;
 
 use node::{NodeHandle, NodeStatus};
 
@@ -51,6 +53,25 @@ fn read_node_identity(
     Ok(None)
 }
 
+fn spawn_external_probe_loop(handle: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let url = node::DEFAULT_EXTERNAL_URL_STR.to_string();
+        loop {
+            sleep(Duration::from_secs(3)).await;
+            let state = handle.state::<AppState>();
+            if !matches!(*state.status.lock().unwrap(), NodeStatus::Failed { .. }) {
+                return;
+            }
+            if node::probe(&url).await {
+                let next = NodeStatus::External { base_url: url.clone() };
+                *state.status.lock().unwrap() = next.clone();
+                let _ = handle.emit("node://status", next);
+                return;
+            }
+        }
+    });
+}
+
 #[tauri::command]
 async fn restart_node(
     app: tauri::AppHandle,
@@ -92,9 +113,14 @@ pub fn run() {
                         reason: e.to_string(),
                     },
                 };
-                let state = handle.state::<AppState>();
-                *state.status.lock().unwrap() = status.clone();
-                let _ = handle.emit("node://status", status);
+                {
+                    let state = handle.state::<AppState>();
+                    *state.status.lock().unwrap() = status.clone();
+                }
+                let _ = handle.emit("node://status", status.clone());
+                if matches!(status, NodeStatus::Failed { .. }) {
+                    spawn_external_probe_loop(handle.clone());
+                }
             });
             Ok(())
         })

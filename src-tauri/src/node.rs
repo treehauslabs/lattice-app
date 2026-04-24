@@ -75,7 +75,9 @@ pub async fn bootstrap(app: &AppHandle) -> Result<BootstrapResult> {
     spawn_managed(app).await
 }
 
-async fn probe(base_url: &str) -> bool {
+pub const DEFAULT_EXTERNAL_URL_STR: &str = DEFAULT_EXTERNAL_URL;
+
+pub async fn probe(base_url: &str) -> bool {
     let Ok(client) = reqwest::Client::builder().timeout(PROBE_TIMEOUT).build() else {
         return false;
     };
@@ -111,7 +113,6 @@ async fn spawn_managed(app: &AppHandle) -> Result<BootstrapResult> {
             "--data-dir",
             data_dir.to_string_lossy().as_ref(),
             "--rpc-auth",
-            "cookie",
         ]);
 
     let (mut rx, child) = command.spawn().context("spawn lattice-node sidecar")?;
