@@ -131,6 +131,24 @@ console.log(`chains: ${chainInfo.json.chains.map(c => `${c.directory}@${c.height
 const childChain = 'FastTest'
 const nexusDir = chainInfo.json.nexus
 
+// Auto-deploy FastTest if it doesn't exist
+if (!chainInfo.json.chains.find(c => c.directory === childChain)) {
+  console.log(`deploying ${childChain}...`)
+  const dep = await rpc('POST', '/api/chain/deploy', {
+    directory: childChain, parentDirectory: nexusDir,
+    targetBlockTime: 1000, initialReward: 1024, halvingInterval: 210000,
+    premine: 0, maxTransactionsPerBlock: 100, maxStateGrowth: 100000,
+    maxBlockSize: 1000000, difficultyAdjustmentWindow: 120, startMining: true
+  })
+  if (!dep.ok) throw new Error(`deploy failed: ${JSON.stringify(dep.json)}`)
+  // Restart nexus mining so merged mining picks up the child chain
+  await rpc('POST', '/api/mining/stop', { chain: nexusDir })
+  await new Promise(r => setTimeout(r, 1000))
+  await rpc('POST', '/api/mining/start', { chain: nexusDir })
+  await waitForHeight(childChain, 10)
+  console.log(`${childChain} deployed and mining`)
+}
+
 const minerNexusBal = await getBalance(minerAddr, nexusDir)
 const minerChildBal = await getBalance(minerAddr, childChain)
 console.log(`\nminer balances  Nexus=${minerNexusBal}  ${childChain}=${minerChildBal}`)
@@ -178,7 +196,13 @@ async function stageFund(chain, chainPath) {
 console.log(`\npausing mining to stage fund txs (avoids coinbase nonce race)`)
 // Stopping Nexus mining pauses all merged-mining (child chains ride along).
 await stopMining(nexusDir)
-await new Promise(r => setTimeout(r, 500)) // let any in-flight block submit finish
+// Wait for in-flight block submissions to drain — height must stop advancing.
+for (let i = 0; i < 10; i++) {
+  const h1 = await waitForHeight(nexusDir, 1)
+  await new Promise(r => setTimeout(r, 300))
+  const h2 = await waitForHeight(nexusDir, 1)
+  if (h1 === h2) break
+}
 
 console.log(`staging fund txs (${fundAmount} on each chain)...`)
 await stageFund(nexusDir, [nexusDir])

@@ -129,9 +129,14 @@ startNode(NODES[2], ['--peer', peerArg])
 await waitForRPC(NODES[1])
 await waitForRPC(NODES[2])
 
-// Give the mesh a moment to settle.
+// Wait for full bidirectional mesh: A must see both B and C.
 console.log('  letting peers connect...')
-await sleep(3000)
+for (let i = 0; i < 20; i++) {
+  const ap = await peerCount(NODES[0])
+  if (ap >= 2) break
+  await sleep(500)
+}
+await sleep(1000)
 
 // 3. Verify mesh connectivity before mining.
 console.log('\n[3] Checking peer connectivity...')
