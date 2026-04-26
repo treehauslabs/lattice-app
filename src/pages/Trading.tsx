@@ -22,14 +22,17 @@ export function Trading() {
   const [tab, setTab] = useState<'trade' | 'orders'>('trade')
   const [side, setSide] = useState<'buy' | 'sell'>('buy')
   const [fillDeposit, setFillDeposit] = useState<DepositEntry | null>(null)
-  const [showSellConfirm, setShowSellConfirm] = useState<{ amount: number; fee: number } | null>(null)
+  const [showSellConfirm, setShowSellConfirm] = useState<{ amountDeposited: number; amountDemanded: number; fee: number } | null>(null)
 
-  const chainDirs = chains.map(c => c.directory)
-  const nexus = chainDirs.find(c => c.toLowerCase() === 'nexus') ?? chainDirs[0] ?? ''
-  const childChains = chainDirs.filter(c => c !== nexus)
-  const activeChild = childChains.includes(selectedChain) ? selectedChain : childChains[0] ?? ''
+  // Trading is between a child chain and its DIRECT parent (the chain tree
+  // can be many levels deep — receipts settle on the immediate parent, not
+  // necessarily the nexus root).
+  const tradeable = chains.filter(c => c.parentDirectory)
+  const activeChain = tradeable.find(c => c.directory === selectedChain) ?? tradeable[0]
+  const activeChild = activeChain?.directory ?? ''
+  const parent = activeChain?.parentDirectory ?? ''
 
-  const nexusBalanceQ = useBalance(activeAccount?.address, nexus)
+  const parentBalanceQ = useBalance(activeAccount?.address, parent)
   const childBalanceQ = useBalance(activeAccount?.address, activeChild)
 
   if (!connected) {
@@ -46,8 +49,22 @@ export function Trading() {
     )
   }
 
-  const nexusBalance = nexusBalanceQ.data ?? 0
+  const parentBalance = parentBalanceQ.data ?? 0
   const childBalance = childBalanceQ.data ?? 0
+
+  if (!activeChild) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <ArrowDownUp size={48} className="mx-auto text-zinc-700 mb-4" />
+          <h2 className="text-xl font-bold text-zinc-300 mb-2">Exchange</h2>
+          <p className="text-zinc-500 text-sm max-w-xs">
+            No child chains available to trade. Use the Foundry to deploy one.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 max-w-lg mx-auto">
@@ -80,8 +97,8 @@ export function Trading() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-[11px] text-zinc-500">{nexus}</div>
-                  <div className="text-xl font-bold">{nexusBalance.toLocaleString()}</div>
+                  <div className="text-[11px] text-zinc-500">{parent}</div>
+                  <div className="text-xl font-bold">{parentBalance.toLocaleString()}</div>
                 </div>
                 <div>
                   <div className="text-[11px] text-zinc-500">{activeChild}</div>
@@ -125,14 +142,15 @@ export function Trading() {
           {side === 'buy' ? (
             <BuyView
               chain={activeChild}
-              nexusBalance={nexusBalance}
+              parent={parent}
+              parentBalance={parentBalance}
               onFill={setFillDeposit}
               hasWallet={!!activeAccount}
             />
           ) : (
             <SellView
               chain={activeChild}
-              nexus={nexus}
+              parent={parent}
               childBalance={childBalance}
               hasWallet={!!activeAccount}
               onConfirm={setShowSellConfirm}
@@ -140,7 +158,7 @@ export function Trading() {
           )}
         </div>
       ) : (
-        <MyOrders childChains={childChains} nexus={nexus} />
+        <MyOrders chains={tradeable} />
       )}
 
       {/* Fill order modal */}
@@ -148,8 +166,8 @@ export function Trading() {
         <FillOrderModal
           deposit={fillDeposit}
           chain={activeChild}
-          nexus={nexus}
-          nexusBalance={nexusBalance}
+          parent={parent}
+          parentBalance={parentBalance}
           onClose={() => setFillDeposit(null)}
           onComplete={() => setFillDeposit(null)}
         />
@@ -158,10 +176,11 @@ export function Trading() {
       {/* Create offer modal */}
       {showSellConfirm && (
         <CreateOfferModal
-          amount={showSellConfirm.amount}
+          amountDeposited={showSellConfirm.amountDeposited}
+          amountDemanded={showSellConfirm.amountDemanded}
           fee={showSellConfirm.fee}
           chain={activeChild}
-          nexus={nexus}
+          parent={parent}
           onClose={() => setShowSellConfirm(null)}
           onComplete={() => setShowSellConfirm(null)}
         />
@@ -174,11 +193,17 @@ export function Trading() {
 // Buy View — Order Book
 // ============================================================
 
-function BuyView({ chain, nexusBalance, onFill, hasWallet }: {
-  chain: string; nexusBalance: number; onFill: (d: DepositEntry) => void; hasWallet: boolean
+function BuyView({ chain, parent, parentBalance, onFill, hasWallet }: {
+  chain: string; parent: string; parentBalance: number; onFill: (d: DepositEntry) => void; hasWallet: boolean
 }) {
+  void parent
   const depositsQ = useDeposits(chain)
-  const deposits = (depositsQ.data?.deposits ?? []).slice().sort((a, b) => a.amountDemanded - b.amountDemanded)
+  // Sort by best price for the buyer: lowest nexus-per-child rate first
+  const deposits = (depositsQ.data?.deposits ?? []).slice().sort((a, b) => {
+    const ra = a.amountDeposited > 0 ? a.amountDemanded / a.amountDeposited : Infinity
+    const rb = b.amountDeposited > 0 ? b.amountDemanded / b.amountDeposited : Infinity
+    return ra - rb
+  })
   const loading = depositsQ.isLoading
 
   return (
@@ -210,7 +235,8 @@ function BuyView({ chain, nexusBalance, onFill, hasWallet }: {
       ) : (
         <div className="divide-y divide-zinc-800/50">
           {deposits.map((d, i) => {
-            const canAfford = nexusBalance >= d.amountDemanded
+            const canAfford = parentBalance >= d.amountDemanded
+            const rate = d.amountDeposited > 0 ? d.amountDemanded / d.amountDeposited : 0
             return (
               <button
                 key={`${d.nonce}-${i}`}
@@ -219,9 +245,13 @@ function BuyView({ chain, nexusBalance, onFill, hasWallet }: {
                 className="w-full flex items-center justify-between px-4 py-3 hover:bg-zinc-800/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed group"
               >
                 <div className="text-left">
-                  <div className="text-sm font-semibold">{d.amountDemanded.toLocaleString()} <span className="text-zinc-500 font-normal text-xs">{chain}</span></div>
+                  <div className="text-sm font-semibold">
+                    {d.amountDeposited.toLocaleString()} <span className="text-zinc-500 font-normal text-xs">{chain}</span>
+                    <span className="text-zinc-600 mx-1.5">→</span>
+                    <span className="text-emerald-400">{d.amountDemanded.toLocaleString()}</span>
+                  </div>
                   <div className="text-[11px] text-zinc-600 mt-0.5">
-                    Seller: {d.demander.slice(0, 16)}...
+                    Rate: {rate.toLocaleString(undefined, { maximumFractionDigits: 4 })} per {chain} · Seller {d.demander.slice(0, 12)}...
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -245,12 +275,13 @@ function BuyView({ chain, nexusBalance, onFill, hasWallet }: {
 // Sell View — Create Offer Form
 // ============================================================
 
-function SellView({ chain, nexus, childBalance, hasWallet, onConfirm }: {
-  chain: string; nexus: string; childBalance: number; hasWallet: boolean
-  onConfirm: (params: { amount: number; fee: number }) => void
+function SellView({ chain, parent, childBalance, hasWallet, onConfirm }: {
+  chain: string; parent: string; childBalance: number; hasWallet: boolean
+  onConfirm: (params: { amountDeposited: number; amountDemanded: number; fee: number }) => void
 }) {
   const feeQ = useFeeEstimate(5, chain)
-  const [amount, setAmount] = useState('')
+  const [sellAmount, setSellAmount] = useState('')
+  const [askAmount, setAskAmount] = useState('')
   const [fee, setFee] = useState('')
   const feeLoading = feeQ.isLoading
 
@@ -259,10 +290,12 @@ function SellView({ chain, nexus, childBalance, hasWallet, onConfirm }: {
     else if (feeQ.isError) setFee('100')
   }, [feeQ.data, feeQ.isError])
 
-  const amountNum = parseInt(amount) || 0
+  const sellNum = parseInt(sellAmount) || 0
+  const askNum = parseInt(askAmount) || 0
   const feeNum = parseInt(fee) || 0
-  const total = amountNum + feeNum
-  const canAfford = childBalance >= total && amountNum > 0
+  const total = sellNum + feeNum
+  const canAfford = childBalance >= total && sellNum > 0 && askNum > 0
+  const rate = sellNum > 0 ? askNum / sellNum : 0
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-4">
@@ -272,23 +305,36 @@ function SellView({ chain, nexus, childBalance, hasWallet, onConfirm }: {
       </div>
 
       <p className="text-xs text-zinc-500">
-        Lock your {chain} tokens as an offer. A buyer on {nexus} will fill it and pay you.
+        Lock {chain} tokens at a price of your choosing. A buyer on {parent} pays you to unlock them.
       </p>
 
-      {/* Amount input */}
+      {/* Sell amount (deposited on child) */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-xs text-zinc-500">Amount</label>
+          <label className="text-xs text-zinc-500">You sell ({chain})</label>
           <button
-            onClick={() => setAmount(String(Math.max(0, childBalance - feeNum)))}
+            onClick={() => setSellAmount(String(Math.max(0, childBalance - feeNum)))}
             className="text-[10px] text-lattice-400 hover:text-lattice-300"
           >
             Max: {childBalance.toLocaleString()}
           </button>
         </div>
         <input
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
+          value={sellAmount}
+          onChange={e => setSellAmount(e.target.value)}
+          type="number"
+          min="1"
+          placeholder="0"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-lg font-bold focus:outline-none focus:border-lattice-500 placeholder:text-zinc-700"
+        />
+      </div>
+
+      {/* Ask amount (demanded on parent) */}
+      <div>
+        <label className="text-xs text-zinc-500 mb-1.5 block">You receive ({parent})</label>
+        <input
+          value={askAmount}
+          onChange={e => setAskAmount(e.target.value)}
           type="number"
           min="1"
           placeholder="0"
@@ -305,28 +351,32 @@ function SellView({ chain, nexus, childBalance, hasWallet, onConfirm }: {
       </div>
 
       {/* Summary */}
-      {amountNum > 0 && (
+      {sellNum > 0 && askNum > 0 && (
         <div className="bg-zinc-800/50 rounded-lg p-3 space-y-1.5 text-xs">
           <div className="flex justify-between">
             <span className="text-zinc-500">You lock</span>
             <span className="text-zinc-200 font-medium">{total.toLocaleString()} {chain}</span>
           </div>
           <div className="flex justify-between">
+            <span className="text-zinc-500">Rate</span>
+            <span className="text-zinc-400">{rate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {parent} per {chain}</span>
+          </div>
+          <div className="flex justify-between">
             <span className="text-zinc-500">You receive (when filled)</span>
-            <span className="text-emerald-400 font-medium">{amountNum.toLocaleString()} {nexus}</span>
+            <span className="text-emerald-400 font-medium">{askNum.toLocaleString()} {parent}</span>
           </div>
         </div>
       )}
 
-      {!canAfford && amountNum > 0 && (
+      {!canAfford && sellNum > 0 && (
         <div className="flex items-center gap-2 text-red-400 text-xs">
           <AlertCircle size={12} />
-          Insufficient {chain} balance
+          {childBalance < total ? `Insufficient ${chain} balance` : 'Set both amounts'}
         </div>
       )}
 
       <button
-        onClick={() => canAfford && onConfirm({ amount: amountNum, fee: feeNum })}
+        onClick={() => canAfford && onConfirm({ amountDeposited: sellNum, amountDemanded: askNum, fee: feeNum })}
         disabled={!hasWallet || !canAfford}
         className="w-full py-3 bg-red-600/80 hover:bg-red-600 rounded-lg text-sm font-semibold disabled:opacity-40 transition-colors"
       >
@@ -342,10 +392,11 @@ function SellView({ chain, nexus, childBalance, hasWallet, onConfirm }: {
 
 type FillStep = 'review' | 'executing' | 'done'
 
-function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComplete }: {
-  deposit: DepositEntry; chain: string; nexus: string; nexusBalance: number
+function FillOrderModal({ deposit, chain, parent, parentBalance, onClose, onComplete }: {
+  deposit: DepositEntry; chain: string; parent: string; parentBalance: number
   onClose: () => void; onComplete: () => void
 }) {
+  void parentBalance
   const { activeAccount, unlock } = useWallet()
   const queryClient = useQueryClient()
   const [step, setStep] = useState<FillStep>('review')
@@ -361,15 +412,15 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
     if (!password) { setError('Enter your password'); return }
     setError('')
     setStep('executing')
-    setStatusText('Submitting payment on ' + nexus + '...')
+    setStatusText('Submitting payment on ' + parent + '...')
 
     try {
       const privateKey = await unlock(password)
 
-      // Step 1: Create receipt on Nexus
-      const nonceResp = await lattice.getNonce(activeAccount.address, nexus)
+      // Step 1: Create receipt on the deposit's parent chain
+      const nonceResp = await lattice.getNonce(activeAccount.address, parent)
       const receiptSigned = await buildReceipt({
-        chainPath: [nexus],
+        chainPath: [parent],
         from: activeAccount.address,
         demander: deposit.demander,
         amount: deposit.amountDemanded,
@@ -379,10 +430,10 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
         nonce: nonceResp.nonce,
         signerPublicKey: activeAccount.publicKey,
       }, privateKey)
-      const receiptResp = await lattice.submitTransaction(receiptSigned, nexus)
+      const receiptResp = await lattice.submitTransaction(receiptSigned, parent)
       if (!receiptResp.accepted) throw new Error(receiptResp.error || 'Receipt rejected')
-      queryClient.invalidateQueries({ queryKey: qk.mempool(nexus) })
-      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, nexus) })
+      queryClient.invalidateQueries({ queryKey: qk.mempool(parent) })
+      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, parent) })
       setProgress(p => ({ ...p, receipt: true }))
 
       // Step 2: Wait briefly for receipt to propagate, then withdraw
@@ -395,7 +446,8 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
         chainPath: [chain],
         from: activeAccount.address,
         demander: deposit.demander,
-        amount: deposit.amountDemanded,
+        amountDemanded: deposit.amountDemanded,
+        amountWithdrawn: deposit.amountDeposited,
         swapNonce: deposit.nonce,
         fee,
         nonce: childNonce.nonce,
@@ -412,7 +464,8 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
       saveOrder({
         type: 'buy',
         chain,
-        amount: deposit.amountDemanded,
+        amountDeposited: deposit.amountDeposited,
+        amountDemanded: deposit.amountDemanded,
         nonce: deposit.nonce,
         demander: deposit.demander,
         receiptTxCID: receiptResp.txCID,
@@ -450,13 +503,20 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
               {/* Order summary */}
               <div className="bg-zinc-800/50 rounded-xl p-4 space-y-3">
                 <div className="text-center">
-                  <div className="text-3xl font-bold">{deposit.amountDemanded.toLocaleString()}</div>
+                  <div className="text-3xl font-bold">{deposit.amountDeposited.toLocaleString()}</div>
                   <div className="text-sm text-zinc-500 mt-1">{chain} tokens</div>
                 </div>
                 <div className="border-t border-zinc-700/50 pt-3 space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">You pay</span>
-                    <span className="text-zinc-200">{deposit.amountDemanded.toLocaleString()} on {nexus}</span>
+                    <span className="text-zinc-200">{deposit.amountDemanded.toLocaleString()} on {parent}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Rate</span>
+                    <span className="text-zinc-400">
+                      {(deposit.amountDeposited > 0 ? deposit.amountDemanded / deposit.amountDeposited : 0)
+                        .toLocaleString(undefined, { maximumFractionDigits: 4 })} {parent} per {chain}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Network fees (x2)</span>
@@ -509,7 +569,7 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
                 <p className="text-sm text-zinc-300">{statusText}</p>
               </div>
               <div className="space-y-2">
-                <ProgressStep done={progress.receipt} label="Pay seller on Nexus" />
+                <ProgressStep done={progress.receipt} label={`Pay seller on ${parent}`} />
                 <ProgressStep done={progress.withdrawal} label={`Claim tokens on ${chain}`} />
               </div>
               {error && (
@@ -550,8 +610,8 @@ function FillOrderModal({ deposit, chain, nexus, nexusBalance, onClose, onComple
 // Create Offer Modal (Sell flow)
 // ============================================================
 
-function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
-  amount: number; fee: number; chain: string; nexus: string
+function CreateOfferModal({ amountDeposited, amountDemanded, fee, chain, parent, onClose, onComplete }: {
+  amountDeposited: number; amountDemanded: number; fee: number; chain: string; parent: string
   onClose: () => void; onComplete: () => void
 }) {
   const { activeAccount, unlock } = useWallet()
@@ -574,7 +634,8 @@ function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
       const signed = await buildDeposit({
         chainPath: [chain],
         from: activeAccount.address,
-        amount,
+        amountDeposited,
+        amountDemanded,
         fee,
         nonce: nonceResp.nonce,
         swapNonce,
@@ -590,7 +651,8 @@ function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
       saveOrder({
         type: 'sell',
         chain,
-        amount,
+        amountDeposited,
+        amountDemanded,
         nonce: swapNonce,
         demander: activeAccount.address,
         depositTxCID: resp.txCID,
@@ -623,16 +685,23 @@ function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
           {step === 'confirm' && (
             <div className="space-y-4">
               <div className="bg-zinc-800/50 rounded-xl p-4 text-center">
-                <div className="text-3xl font-bold">{amount.toLocaleString()}</div>
+                <div className="text-3xl font-bold">{amountDeposited.toLocaleString()}</div>
                 <div className="text-sm text-zinc-500 mt-1">{chain} tokens for sale</div>
                 <div className="border-t border-zinc-700/50 mt-3 pt-3 space-y-2 text-xs text-left">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">You lock</span>
-                    <span className="text-zinc-200">{(amount + fee).toLocaleString()} {chain}</span>
+                    <span className="text-zinc-200">{(amountDeposited + fee).toLocaleString()} {chain}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-500">You receive (when filled)</span>
-                    <span className="text-emerald-400 font-medium">{amount.toLocaleString()} {nexus}</span>
+                    <span className="text-emerald-400 font-medium">{amountDemanded.toLocaleString()} {parent}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Rate</span>
+                    <span className="text-zinc-400">
+                      {(amountDeposited > 0 ? amountDemanded / amountDeposited : 0)
+                        .toLocaleString(undefined, { maximumFractionDigits: 4 })} {parent} per {chain}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Network fee</span>
@@ -679,10 +748,10 @@ function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
               <CheckCircle2 size={48} className="mx-auto text-emerald-400 mb-3" />
               <h3 className="text-lg font-semibold text-emerald-400 mb-1">Offer Live</h3>
               <p className="text-sm text-zinc-500 mb-4">
-                Your {amount.toLocaleString()} {chain} offer is now visible to buyers.
+                Your {amountDeposited.toLocaleString()} {chain} offer is now visible to buyers.
               </p>
               <p className="text-xs text-zinc-600 mb-6">
-                You'll receive {amount.toLocaleString()} on {nexus} when a buyer fills your order.
+                You'll receive {amountDemanded.toLocaleString()} on {parent} when a buyer fills your order.
               </p>
               <button
                 onClick={onComplete}
@@ -705,7 +774,8 @@ function CreateOfferModal({ amount, fee, chain, nexus, onClose, onComplete }: {
 interface SavedOrder {
   type: 'buy' | 'sell'
   chain: string
-  amount: number
+  amountDeposited: number   // child-chain tokens locked / received
+  amountDemanded: number    // nexus tokens demanded / paid
   nonce: string
   demander: string
   depositTxCID?: string
@@ -722,7 +792,8 @@ function saveOrder(order: SavedOrder) {
   localStorage.setItem('lattice_orders', JSON.stringify(stored.slice(0, 100)))
 }
 
-function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string }) {
+function MyOrders({ chains }: { chains: { directory: string; parentDirectory: string | null }[] }) {
+  const parentOf = (dir: string) => chains.find(c => c.directory === dir)?.parentDirectory ?? ''
   const [orders, setOrders] = useState<SavedOrder[]>(() =>
     JSON.parse(localStorage.getItem('lattice_orders') || '[]')
   )
@@ -741,13 +812,13 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
     try {
       const dep = await lattice.getDepositState({
         demander: order.demander,
-        amount: order.amount,
+        amount: order.amountDemanded,
         nonce: order.nonce,
         chain: order.chain,
       })
       const rec = await lattice.getReceiptState({
         demander: order.demander,
-        amount: order.amount,
+        amount: order.amountDemanded,
         nonce: order.nonce,
         directory: order.chain,
       })
@@ -777,7 +848,7 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
           <p className="text-zinc-400 font-medium mb-2">How cross-chain trading works:</p>
           <p>1. A seller creates an offer, locking tokens on a child chain</p>
           <p>2. A buyer fills the offer — payment and token claim happen automatically</p>
-          <p>3. The seller's payment is auto-claimed on the nexus chain</p>
+          <p>3. The seller's payment is auto-credited on the parent chain</p>
         </div>
       </div>
     )
@@ -800,7 +871,11 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
                 }`}>
                   {order.type}
                 </span>
-                <span className="text-sm font-medium">{order.amount.toLocaleString()} {order.chain}</span>
+                <span className="text-sm font-medium">
+                  {order.amountDeposited.toLocaleString()} {order.chain}
+                  <span className="text-zinc-600 mx-1.5">→</span>
+                  <span className="text-zinc-400">{order.amountDemanded.toLocaleString()} {parentOf(order.chain)}</span>
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <StatusBadge status={order.status} />
@@ -833,7 +908,7 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
       {claimOrder && (
         <ClaimPaymentModal
           order={claimOrder.order}
-          nexus={nexus}
+          parent={parentOf(claimOrder.order.chain)}
           onClose={() => setClaimOrder(null)}
           onComplete={(claimTxCID) => {
             updateOrder(claimOrder.index, { status: 'complete', claimTxCID })
@@ -846,11 +921,11 @@ function MyOrders({ childChains, nexus }: { childChains: string[]; nexus: string
 }
 
 // ============================================================
-// Claim Payment Modal (Seller collects nexus payment)
+// Claim Payment Modal (Seller collects parent-chain payment)
 // ============================================================
 
-function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
-  order: SavedOrder; nexus: string
+function ClaimPaymentModal({ order, parent, onClose, onComplete }: {
+  order: SavedOrder; parent: string
   onClose: () => void; onComplete: (claimTxCID: string) => void
 }) {
   const { activeAccount, unlock } = useWallet()
@@ -870,23 +945,24 @@ function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
 
     try {
       const privateKey = await unlock(password)
-      const nonceResp = await lattice.getNonce(activeAccount.address, nexus)
+      const nonceResp = await lattice.getNonce(activeAccount.address, parent)
 
       const withdrawSigned = await buildWithdrawal({
-        chainPath: [nexus],
+        chainPath: [parent],
         from: activeAccount.address,
         demander: order.demander,
-        amount: order.amount,
+        amountDemanded: order.amountDemanded,
+        amountWithdrawn: order.amountDeposited,
         swapNonce: order.nonce,
         fee,
         nonce: nonceResp.nonce,
         signerPublicKey: activeAccount.publicKey,
       }, privateKey)
 
-      const resp = await lattice.submitTransaction(withdrawSigned, nexus)
+      const resp = await lattice.submitTransaction(withdrawSigned, parent)
       if (!resp.accepted) throw new Error(resp.error || 'Claim rejected')
-      queryClient.invalidateQueries({ queryKey: qk.mempool(nexus) })
-      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, nexus) })
+      queryClient.invalidateQueries({ queryKey: qk.mempool(parent) })
+      queryClient.invalidateQueries({ queryKey: qk.nonce(activeAccount.address, parent) })
 
       setClaimTxCID(resp.txCID)
       setStep('done')
@@ -915,12 +991,12 @@ function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
           {step === 'review' && (
             <div className="space-y-4">
               <div className="bg-zinc-800/50 rounded-xl p-4 text-center">
-                <div className="text-3xl font-bold text-emerald-400">{order.amount.toLocaleString()}</div>
-                <div className="text-sm text-zinc-500 mt-1">{nexus} tokens to claim</div>
+                <div className="text-3xl font-bold text-emerald-400">{order.amountDemanded.toLocaleString()}</div>
+                <div className="text-sm text-zinc-500 mt-1">{parent} tokens to claim</div>
                 <div className="border-t border-zinc-700/50 mt-3 pt-3 space-y-2 text-xs text-left">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">From your sell offer</span>
-                    <span className="text-zinc-200">{order.amount.toLocaleString()} {order.chain}</span>
+                    <span className="text-zinc-200">{order.amountDeposited.toLocaleString()} {order.chain}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-zinc-500">Network fee</span>
@@ -928,7 +1004,7 @@ function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
                   </div>
                   <div className="flex justify-between font-medium">
                     <span className="text-zinc-400">You receive</span>
-                    <span className="text-emerald-400">{(order.amount - fee).toLocaleString()} {nexus}</span>
+                    <span className="text-emerald-400">{(order.amountDemanded - fee).toLocaleString()} {parent}</span>
                   </div>
                 </div>
               </div>
@@ -962,7 +1038,7 @@ function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
           {step === 'executing' && (
             <div className="text-center py-8">
               <Loader2 size={32} className="mx-auto text-emerald-400 animate-spin mb-3" />
-              <p className="text-sm text-zinc-300">Claiming payment on {nexus}...</p>
+              <p className="text-sm text-zinc-300">Claiming payment on {parent}...</p>
             </div>
           )}
 
@@ -971,7 +1047,7 @@ function ClaimPaymentModal({ order, nexus, onClose, onComplete }: {
               <CheckCircle2 size={48} className="mx-auto text-emerald-400 mb-3" />
               <h3 className="text-lg font-semibold text-emerald-400 mb-1">Payment Claimed</h3>
               <p className="text-sm text-zinc-500 mb-2">
-                {order.amount.toLocaleString()} {nexus} added to your balance
+                {order.amountDemanded.toLocaleString()} {parent} added to your balance
               </p>
               <p className="text-xs font-mono text-zinc-600 break-all mb-6">{claimTxCID}</p>
               <button
