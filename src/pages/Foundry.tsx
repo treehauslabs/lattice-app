@@ -1,15 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import {
   Hammer, Timer, Coins, Scale, Gauge, HardDrive, BarChart3, Filter,
   Sliders, ChevronDown, ChevronRight, AlertCircle, CheckCircle2,
   Zap, Shield, Activity, Rocket, Feather, Wand2, Pickaxe, Plus, X,
-  Server,
+  Server, Code, Copy, FileUp, Check,
 } from 'lucide-react'
 import { useNode } from '../hooks/useNode'
 import { useWallet } from '../hooks/useWallet'
 import { lattice } from '../api/client'
 import { publicKeyFromPrivate } from '../wallet/signer'
 import { decryptPrivateKey } from '../wallet/keystore'
+import { CodeEditor } from '../components/CodeEditor'
 
 // ============================================================
 // Spec + presets
@@ -159,6 +160,180 @@ function emptyDraft(parent: string): ChainDraft {
 }
 
 // ============================================================
+// Config file serialization (YAML / JSON)
+// ============================================================
+
+type EditorMode = 'visual' | 'code'
+type CodeFormat = 'yaml' | 'json'
+
+interface ChainSpec {
+  name: string
+  parent: string
+  targetBlockTime: number
+  initialRewardExponent: number
+  halvingInterval: number
+  premine: number
+  premineRecipient: string
+  maxTransactionsPerBlock: number
+  maxStateGrowth: number
+  maxBlockSize: number
+  difficultyAdjustmentWindow: number
+  transactionFilters: string[]
+  actionFilters: string[]
+}
+
+function draftToSpec(d: ChainDraft): ChainSpec {
+  return {
+    name: d.directory,
+    parent: d.parentDirectory,
+    targetBlockTime: d.targetBlockTime,
+    initialRewardExponent: d.initialRewardExponent,
+    halvingInterval: d.halvingInterval,
+    premine: d.premine,
+    premineRecipient: d.premineRecipient,
+    maxTransactionsPerBlock: d.maxTransactionsPerBlock,
+    maxStateGrowth: d.maxStateGrowth,
+    maxBlockSize: d.maxBlockSize,
+    difficultyAdjustmentWindow: d.difficultyAdjustmentWindow,
+    transactionFilters: d.transactionFilters,
+    actionFilters: d.actionFilters,
+  }
+}
+
+function specToDraft(spec: Partial<ChainSpec>, fallback: ChainDraft): ChainDraft {
+  return {
+    directory: typeof spec.name === 'string' ? spec.name : fallback.directory,
+    parentDirectory: typeof spec.parent === 'string' ? spec.parent : fallback.parentDirectory,
+    targetBlockTime: typeof spec.targetBlockTime === 'number' ? spec.targetBlockTime : fallback.targetBlockTime,
+    initialRewardExponent: typeof spec.initialRewardExponent === 'number' ? spec.initialRewardExponent : fallback.initialRewardExponent,
+    halvingInterval: typeof spec.halvingInterval === 'number' ? spec.halvingInterval : fallback.halvingInterval,
+    premine: typeof spec.premine === 'number' ? spec.premine : fallback.premine,
+    premineRecipient: typeof spec.premineRecipient === 'string' ? spec.premineRecipient : fallback.premineRecipient,
+    maxTransactionsPerBlock: typeof spec.maxTransactionsPerBlock === 'number' ? spec.maxTransactionsPerBlock : fallback.maxTransactionsPerBlock,
+    maxStateGrowth: typeof spec.maxStateGrowth === 'number' ? spec.maxStateGrowth : fallback.maxStateGrowth,
+    maxBlockSize: typeof spec.maxBlockSize === 'number' ? spec.maxBlockSize : fallback.maxBlockSize,
+    difficultyAdjustmentWindow: typeof spec.difficultyAdjustmentWindow === 'number' ? spec.difficultyAdjustmentWindow : fallback.difficultyAdjustmentWindow,
+    startMining: fallback.startMining,
+    transactionFilters: Array.isArray(spec.transactionFilters) ? spec.transactionFilters.map(String) : fallback.transactionFilters,
+    actionFilters: Array.isArray(spec.actionFilters) ? spec.actionFilters.map(String) : fallback.actionFilters,
+  }
+}
+
+function draftToYaml(d: ChainDraft): string {
+  const q = (s: string) => /^[\w./-]*$/.test(s) && s !== '' ? s : `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  const arr = (items: string[]) => {
+    if (items.length === 0) return '[]'
+    return '\n' + items.map(f => `  - ${JSON.stringify(f)}`).join('\n')
+  }
+  return [
+    `name: ${q(d.directory)}`,
+    `parent: ${q(d.parentDirectory)}`,
+    ``,
+    `targetBlockTime: ${d.targetBlockTime}`,
+    `initialRewardExponent: ${d.initialRewardExponent}`,
+    `halvingInterval: ${d.halvingInterval}`,
+    ``,
+    `premine: ${d.premine}`,
+    `premineRecipient: ${q(d.premineRecipient)}`,
+    ``,
+    `maxTransactionsPerBlock: ${d.maxTransactionsPerBlock}`,
+    `maxStateGrowth: ${d.maxStateGrowth}`,
+    `maxBlockSize: ${d.maxBlockSize}`,
+    ``,
+    `difficultyAdjustmentWindow: ${d.difficultyAdjustmentWindow}`,
+    ``,
+    `transactionFilters: ${arr(d.transactionFilters)}`,
+    `actionFilters: ${arr(d.actionFilters)}`,
+  ].join('\n') + '\n'
+}
+
+function draftToJson(d: ChainDraft): string {
+  return JSON.stringify(draftToSpec(d), null, 2) + '\n'
+}
+
+function parseYamlScalar(s: string): string | number | boolean {
+  const t = s.trim()
+  if (t === 'true') return true
+  if (t === 'false') return false
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))
+    return t.slice(1, -1)
+  const n = Number(t)
+  if (t !== '' && !isNaN(n)) return n
+  return t
+}
+
+function stripYamlComment(line: string): string {
+  let inSingle = false, inDouble = false
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '"' && !inSingle) inDouble = !inDouble
+    else if (ch === "'" && !inDouble) inSingle = !inSingle
+    else if (ch === '#' && !inSingle && !inDouble) return line.slice(0, i)
+  }
+  return line
+}
+
+function parseYamlConfig(text: string): { result?: Record<string, unknown>; error?: string } {
+  try {
+    const obj: Record<string, unknown> = {}
+    const lines = text.split('\n')
+    let i = 0
+
+    while (i < lines.length) {
+      const stripped = stripYamlComment(lines[i]).trim()
+      if (!stripped) { i++; continue }
+
+      const kv = stripped.match(/^([a-zA-Z]\w*)\s*:\s*(.*)$/)
+      if (!kv) return { error: `Line ${i + 1}: expected "key: value"` }
+
+      const key = kv[1]
+      const val = kv[2].trim()
+
+      if (val === '[]') {
+        obj[key] = []; i++
+      } else if (val.startsWith('[')) {
+        const inner = val.slice(1, val.lastIndexOf(']')).trim()
+        obj[key] = inner ? inner.split(',').map(s => parseYamlScalar(s.trim())) : []
+        i++
+      } else if (val === '') {
+        const items: unknown[] = []
+        i++
+        while (i < lines.length) {
+          const next = stripYamlComment(lines[i]).trimEnd()
+          const m = next.match(/^\s+-\s+(.*)$/) || next.match(/^\s+-(.+)$/)
+          if (!m) break
+          items.push(parseYamlScalar(m[1]))
+          i++
+        }
+        obj[key] = items
+      } else {
+        obj[key] = parseYamlScalar(val)
+        i++
+      }
+    }
+    return { result: obj }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Parse error' }
+  }
+}
+
+function parseCode(text: string, format: CodeFormat, fallback: ChainDraft): { draft?: ChainDraft; error?: string } {
+  try {
+    if (format === 'json') {
+      const obj = JSON.parse(text)
+      if (!obj || typeof obj !== 'object') return { error: 'Expected a JSON object' }
+      return { draft: specToDraft(obj, fallback) }
+    }
+    const { result, error } = parseYamlConfig(text)
+    if (error) return { error }
+    if (!result) return { error: 'Empty document' }
+    return { draft: specToDraft(result as Partial<ChainSpec>, fallback) }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Parse error' }
+  }
+}
+
+// ============================================================
 // Preview math
 // ============================================================
 
@@ -277,6 +452,53 @@ function NumberInput({
   )
 }
 
+const BYTE_UNITS = [
+  { label: 'B', factor: 1 },
+  { label: 'KB', factor: 1024 },
+  { label: 'MB', factor: 1024 * 1024 },
+] as const
+
+function ByteInput({
+  value, onChange,
+}: {
+  value: number
+  onChange: (n: number) => void
+}) {
+  const best = value >= 1024 * 1024 ? 2 : value >= 1024 ? 1 : 0
+  const [unitIdx, setUnitIdx] = useState(best)
+  const unit = BYTE_UNITS[unitIdx]
+  const display = value / unit.factor
+
+  return (
+    <div className="flex gap-1.5">
+      <div className="relative flex-1">
+        <input
+          type="number"
+          value={display}
+          min={1}
+          onChange={e => {
+            const v = parseFloat(e.target.value)
+            onChange(Number.isFinite(v) ? Math.max(1, Math.floor(v * unit.factor)) : 1)
+          }}
+          className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm tabular-nums focus:outline-none focus:border-lattice-500"
+        />
+      </div>
+      <select
+        value={unitIdx}
+        onChange={e => {
+          const idx = parseInt(e.target.value)
+          setUnitIdx(idx)
+        }}
+        className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2.5 text-xs text-zinc-300 focus:outline-none focus:border-lattice-500"
+      >
+        {BYTE_UNITS.map((u, i) => (
+          <option key={u.label} value={i}>{u.label}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 // ============================================================
 // Unlock miner modal (for premine signature)
 // ============================================================
@@ -376,12 +598,17 @@ export function Foundry() {
   const nexusName = chains.find(c => c.directory === 'Nexus')?.directory ?? (chains[0]?.directory ?? 'Nexus')
   const [draft, setDraft] = useState<ChainDraft>(() => emptyDraft(nexusName))
   const [preset, setPreset] = useState<PresetKey | 'custom'>('standard')
-  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [unlockOpen, setUnlockOpen] = useState(false)
   const [deploying, setDeploying] = useState(false)
   const [success, setSuccess] = useState<{ directory: string; genesisHash: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const [mode, setMode] = useState<EditorMode>('visual')
+  const [codeFormat, setCodeFormat] = useState<CodeFormat>('yaml')
+  const [codeText, setCodeText] = useState('')
+  const [parseError, setParseError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const existingNames = chains.map(c => c.directory)
 
@@ -390,9 +617,91 @@ export function Foundry() {
     setPreset('custom')
   }
 
+  const switchToCode = useCallback(() => {
+    setCodeText(codeFormat === 'yaml' ? draftToYaml(draft) : draftToJson(draft))
+    setParseError(null)
+    setMode('code')
+  }, [draft, codeFormat])
+
+  const switchToVisual = useCallback(() => {
+    if (codeText) {
+      const result = parseCode(codeText, codeFormat, draft)
+      if (result.error) {
+        setParseError(result.error)
+        return
+      }
+      if (result.draft) {
+        setDraft(result.draft)
+        setPreset('custom')
+      }
+    }
+    setParseError(null)
+    setMode('visual')
+  }, [codeText, codeFormat, draft])
+
+  const handleCodeChange = useCallback((text: string) => {
+    setCodeText(text)
+    const result = parseCode(text, codeFormat, draft)
+    if (result.error) {
+      setParseError(result.error)
+    } else if (result.draft) {
+      setParseError(null)
+      setDraft(result.draft)
+      setPreset('custom')
+    }
+  }, [codeFormat, draft])
+
+  const switchFormat = useCallback((fmt: CodeFormat) => {
+    const result = parseCode(codeText, codeFormat, draft)
+    if (result.draft) {
+      setCodeFormat(fmt)
+      setCodeText(fmt === 'yaml' ? draftToYaml(result.draft) : draftToJson(result.draft))
+      setParseError(null)
+    } else {
+      setCodeFormat(fmt)
+      setParseError('Fix syntax errors before converting')
+    }
+  }, [codeText, codeFormat, draft])
+
+  const handleCopy = useCallback(() => {
+    const text = mode === 'code' ? codeText : (codeFormat === 'yaml' ? draftToYaml(draft) : draftToJson(draft))
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }, [mode, codeText, codeFormat, draft])
+
+  const handleImportFile = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.yaml,.yml,.json'
+    input.onchange = async () => {
+      const file = input.files?.[0]
+      if (!file) return
+      const text = await file.text()
+      const fmt: CodeFormat = file.name.endsWith('.json') ? 'json' : 'yaml'
+      setCodeFormat(fmt)
+      setCodeText(text)
+      setMode('code')
+      const result = parseCode(text, fmt, draft)
+      if (result.draft) {
+        setDraft(result.draft)
+        setPreset('custom')
+        setParseError(null)
+      } else {
+        setParseError(result.error ?? 'Invalid file')
+      }
+    }
+    input.click()
+  }, [draft])
+
   const applyPreset = (key: PresetKey) => {
-    setDraft(d => PRESETS[key].apply(d))
+    const next = PRESETS[key].apply(draft)
+    setDraft(next)
     setPreset(key)
+    if (mode === 'code') {
+      setCodeText(codeFormat === 'yaml' ? draftToYaml(next) : draftToJson(next))
+      setParseError(null)
+    }
   }
 
   const issues = useMemo(() => validate(draft, existingNames), [draft, existingNames])
@@ -428,8 +737,13 @@ export function Foundry() {
         minerPrivateKey: identity?.privateKey,
       })
       setSuccess({ directory: res.directory, genesisHash: res.genesisHash })
-      setDraft(emptyDraft(nexusName))
+      const fresh = emptyDraft(nexusName)
+      setDraft(fresh)
       setPreset('standard')
+      if (mode === 'code') {
+        setCodeText(codeFormat === 'yaml' ? draftToYaml(fresh) : draftToJson(fresh))
+        setParseError(null)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Deploy failed')
     }
@@ -467,6 +781,30 @@ export function Foundry() {
             <Hammer size={22} className="text-lattice-400" /> Foundry
           </h1>
           <p className="text-sm text-zinc-500 mt-1">Forge a new chain anchored to a parent. Every parameter is yours to set.</p>
+        </div>
+        <div className="flex items-center bg-zinc-800/60 rounded-lg p-0.5 gap-0.5">
+          <button
+            onClick={mode === 'code' ? switchToVisual : undefined}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-md transition-all duration-150 ${
+              mode === 'visual'
+                ? 'bg-zinc-700 text-zinc-100 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <Sliders size={12} />
+            Visual
+          </button>
+          <button
+            onClick={mode === 'visual' ? switchToCode : undefined}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium rounded-md transition-all duration-150 ${
+              mode === 'code'
+                ? 'bg-zinc-700 text-zinc-100 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <Code size={12} />
+            Code
+          </button>
         </div>
       </div>
 
@@ -513,211 +851,214 @@ export function Foundry() {
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
-        {/* Form */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Basics */}
-          <section className="bg-zinc-900/80 rounded-2xl p-5">
-            <h2 className="font-semibold text-sm mb-4 flex items-center gap-2">
-              <Sliders size={14} className="text-lattice-400" /> Basics
-            </h2>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Field label="Chain name" hint="Used as the directory identifier">
-                <input
-                  value={draft.directory}
-                  onChange={e => update({ directory: e.target.value })}
-                  placeholder="MyChain"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500 placeholder:text-zinc-600"
-                />
-              </Field>
-              <Field label="Parent chain" hint="Child inherits security via merged mining. Any chain can anchor a new chain — pick a child or grandchild to nest deeper.">
-                <select
-                  value={draft.parentDirectory}
-                  onChange={e => update({ parentDirectory: e.target.value })}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500"
-                >
-                  {buildChainHierarchy(chains, nexusName).map(({ directory, depth }) => (
-                    <option key={directory} value={directory}>
-                      {' '.repeat(depth) + (depth > 0 ? '↳ ' : '') + directory}
-                    </option>
+          {mode === 'code' ? (
+            <>
+              {/* Code toolbar */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center bg-zinc-800/60 rounded-lg p-0.5 gap-0.5">
+                  {(['yaml', 'json'] as const).map(fmt => (
+                    <button
+                      key={fmt}
+                      onClick={() => switchFormat(fmt)}
+                      className={`px-3 py-1 text-[11px] font-semibold uppercase tracking-wider rounded-md transition-all duration-150 ${
+                        codeFormat === fmt
+                          ? 'bg-zinc-700 text-zinc-100 shadow-sm'
+                          : 'text-zinc-500 hover:text-zinc-300'
+                      }`}
+                    >
+                      {fmt}
+                    </button>
                   ))}
-                </select>
-              </Field>
-            </div>
-          </section>
-
-          {/* Economics */}
-          <section className="bg-zinc-900/80 rounded-2xl p-5">
-            <h2 className="font-semibold text-sm mb-4 flex items-center gap-2">
-              <Coins size={14} className="text-lattice-400" /> Economics
-            </h2>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <Field label="Block time" hint={`Target interval · ${formatDuration(draft.targetBlockTime)}`}>
-                <NumberInput
-                  value={draft.targetBlockTime}
-                  onChange={n => update({ targetBlockTime: Math.max(0, Math.floor(n)) })}
-                  min={1}
-                  suffix="ms"
-                />
-              </Field>
-              <Field label="Initial reward" hint={`2^${draft.initialRewardExponent} = ${reward.toLocaleString()} tokens/block`}>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    min={0}
-                    max={32}
-                    step={1}
-                    value={draft.initialRewardExponent}
-                    onChange={e => update({ initialRewardExponent: parseInt(e.target.value) })}
-                    className="flex-1 accent-lattice-500"
-                  />
-                  <span className="text-xs font-mono tabular-nums text-zinc-300 w-14 text-right">2^{draft.initialRewardExponent}</span>
                 </div>
-              </Field>
-              <Field label="Halving interval" hint={`${formatDuration(draft.halvingInterval * draft.targetBlockTime)} between halvings`}>
-                <NumberInput
-                  value={draft.halvingInterval}
-                  onChange={n => update({ halvingInterval: Math.max(1, Math.floor(n)) })}
-                  min={1}
-                  suffix="blocks"
-                />
-              </Field>
-              <Field
-                label="Premine"
-                hint={
-                  draft.premine > 0
-                    ? `${formatLarge(premine)} tokens minted into genesis`
-                    : 'No pre-allocated supply'
-                }
-              >
-                <NumberInput
-                  value={draft.premine}
-                  onChange={n => update({ premine: Math.max(0, Math.floor(n)) })}
-                  min={0}
-                  suffix="blocks"
-                />
-              </Field>
-            </div>
-
-            {draft.premine > 0 && (
-              <div className="mt-3">
-                <Field label="Premine recipient" hint="Which address receives the pre-allocated supply">
-                  <select
-                    value={draft.premineRecipient}
-                    onChange={e => update({ premineRecipient: e.target.value })}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500"
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleImportFile}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/60 hover:bg-zinc-800 rounded-lg transition-colors"
                   >
-                    <option value="">Pick a wallet account...</option>
-                    {accounts.map(a => (
-                      <option key={a.publicKey} value={a.address}>
-                        {a.name} — {a.address.slice(0, 20)}...
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                    <FileUp size={12} /> Import
+                  </button>
+                  <button
+                    onClick={handleCopy}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-zinc-400 hover:text-zinc-200 bg-zinc-800/60 hover:bg-zinc-800 rounded-lg transition-colors"
+                  >
+                    {copied ? <><Check size={12} className="text-emerald-400" /> Copied</> : <><Copy size={12} /> Copy</>}
+                  </button>
+                </div>
               </div>
-            )}
-          </section>
+              <CodeEditor
+                value={codeText}
+                onChange={handleCodeChange}
+                error={parseError}
+              />
+            </>
+          ) : (
+            <>
+              {/* Identity */}
+              <section className="bg-zinc-900/80 rounded-2xl p-4">
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Field label="Chain name" hint="Directory identifier on the node">
+                    <input
+                      value={draft.directory}
+                      onChange={e => update({ directory: e.target.value })}
+                      placeholder="MyChain"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500 placeholder:text-zinc-600"
+                    />
+                  </Field>
+                  <Field label="Parent chain" hint="Inherits security via merged mining">
+                    <select
+                      value={draft.parentDirectory}
+                      onChange={e => update({ parentDirectory: e.target.value })}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500"
+                    >
+                      {buildChainHierarchy(chains, nexusName).map(({ directory, depth }) => (
+                        <option key={directory} value={directory}>
+                          {' '.repeat(depth * 2) + (depth > 0 ? '↳ ' : '') + directory}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              </section>
 
-          {/* Capacity */}
-          <section className="bg-zinc-900/80 rounded-2xl p-5">
-            <h2 className="font-semibold text-sm mb-4 flex items-center gap-2">
-              <Gauge size={14} className="text-lattice-400" /> Capacity
-            </h2>
-            <div className="grid sm:grid-cols-3 gap-3">
-              <Field label="Max tx / block">
-                <NumberInput
-                  value={draft.maxTransactionsPerBlock}
-                  onChange={n => update({ maxTransactionsPerBlock: Math.max(1, Math.floor(n)) })}
-                  min={1}
-                />
-              </Field>
-              <Field label="Max state growth" hint={formatBytes(draft.maxStateGrowth) + ' / block'}>
-                <NumberInput
-                  value={draft.maxStateGrowth}
-                  onChange={n => update({ maxStateGrowth: Math.max(1, Math.floor(n)) })}
-                  min={1}
-                  suffix="B"
-                />
-              </Field>
-              <Field label="Max block size" hint={formatBytes(draft.maxBlockSize)}>
-                <NumberInput
-                  value={draft.maxBlockSize}
-                  onChange={n => update({ maxBlockSize: Math.max(1, Math.floor(n)) })}
-                  min={1}
-                  suffix="B"
-                />
-              </Field>
-            </div>
-          </section>
+              {/* Chain Parameters */}
+              <section className="bg-zinc-900/80 rounded-2xl p-5">
+                <h2 className="font-semibold text-sm mb-4 flex items-center gap-2">
+                  <Sliders size={14} className="text-lattice-400" /> Chain Parameters
+                </h2>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Field label="Block time" hint={`Target interval · ${formatDuration(draft.targetBlockTime)}`}>
+                    <NumberInput
+                      value={draft.targetBlockTime}
+                      onChange={n => update({ targetBlockTime: Math.max(0, Math.floor(n)) })}
+                      min={1}
+                      suffix="ms"
+                    />
+                  </Field>
+                  <Field label="Difficulty window" hint="Blocks averaged to retarget">
+                    <NumberInput
+                      value={draft.difficultyAdjustmentWindow}
+                      onChange={n => update({ difficultyAdjustmentWindow: Math.max(1, Math.floor(n)) })}
+                      min={1}
+                      suffix="blocks"
+                    />
+                  </Field>
+                  <Field label="Initial reward" hint={`2^${draft.initialRewardExponent} = ${reward.toLocaleString()} tokens/block`}>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min={0}
+                        max={32}
+                        step={1}
+                        value={draft.initialRewardExponent}
+                        onChange={e => update({ initialRewardExponent: parseInt(e.target.value) })}
+                        className="flex-1 accent-lattice-500"
+                      />
+                      <span className="text-xs font-mono tabular-nums text-zinc-300 w-14 text-right">2^{draft.initialRewardExponent}</span>
+                    </div>
+                  </Field>
+                  <Field label="Halving interval" hint={`${formatDuration(draft.halvingInterval * draft.targetBlockTime)} between halvings`}>
+                    <NumberInput
+                      value={draft.halvingInterval}
+                      onChange={n => update({ halvingInterval: Math.max(1, Math.floor(n)) })}
+                      min={1}
+                      suffix="blocks"
+                    />
+                  </Field>
+                </div>
+                <div className="border-t border-zinc-800/60 mt-4 pt-4">
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <Field label="Max tx / block">
+                      <NumberInput
+                        value={draft.maxTransactionsPerBlock}
+                        onChange={n => update({ maxTransactionsPerBlock: Math.max(1, Math.floor(n)) })}
+                        min={1}
+                      />
+                    </Field>
+                    <Field label="Max state growth" hint="Per block">
+                      <ByteInput
+                        value={draft.maxStateGrowth}
+                        onChange={n => update({ maxStateGrowth: n })}
+                      />
+                    </Field>
+                    <Field label="Max block size">
+                      <ByteInput
+                        value={draft.maxBlockSize}
+                        onChange={n => update({ maxBlockSize: n })}
+                      />
+                    </Field>
+                  </div>
+                </div>
+              </section>
 
-          {/* Advanced */}
-          <section className="bg-zinc-900/80 rounded-2xl overflow-hidden">
-            <button
-              onClick={() => setAdvancedOpen(v => !v)}
-              className="w-full flex items-center justify-between px-5 py-4 hover:bg-zinc-800/30 transition-colors"
-            >
-              <span className="font-semibold text-sm flex items-center gap-2">
-                <Scale size={14} className="text-lattice-400" /> Advanced
-              </span>
-              {advancedOpen ? <ChevronDown size={14} className="text-zinc-500" /> : <ChevronRight size={14} className="text-zinc-500" />}
-            </button>
-            {advancedOpen && (
-              <div className="px-5 pb-5 border-t border-zinc-800/60 pt-4 space-y-3">
-                <Field label="Difficulty adjustment window" hint="Blocks averaged to retarget difficulty">
-                  <NumberInput
-                    value={draft.difficultyAdjustmentWindow}
-                    onChange={n => update({ difficultyAdjustmentWindow: Math.max(1, Math.floor(n)) })}
-                    min={1}
-                    suffix="blocks"
-                  />
-                </Field>
-                <label className="flex items-center gap-2 cursor-pointer pt-2">
-                  <input
-                    type="checkbox"
-                    checked={draft.startMining}
-                    onChange={e => update({ startMining: e.target.checked })}
-                    className="accent-lattice-500"
-                  />
-                  <span className="text-sm text-zinc-300">Start mining on this node after deploy</span>
-                </label>
-              </div>
-            )}
-          </section>
+              {/* Genesis */}
+              <section className="bg-zinc-900/80 rounded-2xl p-5">
+                <h2 className="font-semibold text-sm mb-4 flex items-center gap-2">
+                  <Pickaxe size={14} className="text-lattice-400" /> Genesis
+                </h2>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Field
+                    label="Premine"
+                    hint={
+                      draft.premine > 0
+                        ? `${formatLarge(premine)} tokens minted into genesis`
+                        : 'No pre-allocated supply'
+                    }
+                  >
+                    <NumberInput
+                      value={draft.premine}
+                      onChange={n => update({ premine: Math.max(0, Math.floor(n)) })}
+                      min={0}
+                      suffix="blocks"
+                    />
+                  </Field>
+                  {draft.premine > 0 && (
+                    <Field label="Premine recipient" hint="Receives the pre-allocated supply">
+                      <select
+                        value={draft.premineRecipient}
+                        onChange={e => update({ premineRecipient: e.target.value })}
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-lattice-500"
+                      >
+                        <option value="">Pick a wallet account...</option>
+                        {accounts.map(a => (
+                          <option key={a.publicKey} value={a.address}>
+                            {a.name} — {a.address.slice(0, 20)}...
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                </div>
 
-          {/* Filters */}
-          <section className="bg-zinc-900/80 rounded-2xl overflow-hidden">
-            <button
-              onClick={() => setFiltersOpen(v => !v)}
-              className="w-full flex items-center justify-between px-5 py-4 hover:bg-zinc-800/30 transition-colors"
-            >
-              <span className="font-semibold text-sm flex items-center gap-2">
-                <Filter size={14} className="text-lattice-400" /> Filters
-                <span className="text-[11px] text-zinc-500 tabular-nums">
-                  {draft.transactionFilters.length + draft.actionFilters.length}
-                </span>
-              </span>
-              {filtersOpen ? <ChevronDown size={14} className="text-zinc-500" /> : <ChevronRight size={14} className="text-zinc-500" />}
-            </button>
-            {filtersOpen && (
-              <div className="px-5 pb-5 border-t border-zinc-800/60 pt-4 space-y-5">
-                <FilterEditor
-                  label="Transaction filters"
-                  hint="JavaScript predicate evaluated per transaction body"
-                  filters={draft.transactionFilters}
-                  onChange={fs => update({ transactionFilters: fs })}
-                />
-                <FilterEditor
-                  label="Action filters"
-                  hint="JavaScript predicate evaluated per action"
-                  filters={draft.actionFilters}
-                  onChange={fs => update({ actionFilters: fs })}
-                />
-              </div>
-            )}
-          </section>
+                {(draft.transactionFilters.length > 0 || draft.actionFilters.length > 0 || filtersOpen) ? (
+                  <div className="border-t border-zinc-800/60 mt-4 pt-4 space-y-5">
+                    <FilterEditor
+                      label="Transaction filters"
+                      hint="JavaScript predicate evaluated per transaction body"
+                      filters={draft.transactionFilters}
+                      onChange={fs => update({ transactionFilters: fs })}
+                    />
+                    <FilterEditor
+                      label="Action filters"
+                      hint="JavaScript predicate evaluated per action"
+                      filters={draft.actionFilters}
+                      onChange={fs => update({ actionFilters: fs })}
+                    />
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setFiltersOpen(true)}
+                    className="mt-3 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1.5"
+                  >
+                    <Filter size={11} /> Add transaction or action filters...
+                  </button>
+                )}
+              </section>
+            </>
+          )}
         </div>
 
-        {/* Preview + mint */}
+        {/* Preview + deploy */}
         <aside className="lg:sticky lg:top-6 self-start space-y-4">
           <div className="bg-zinc-900/80 rounded-2xl p-5">
             <div className="flex items-center gap-2 mb-4">
@@ -757,10 +1098,15 @@ export function Foundry() {
           )}
 
           <div className="bg-zinc-900/80 rounded-2xl p-5">
-            <div className="text-xs text-zinc-500 mb-3 leading-relaxed">
-              The genesis block is built by the node — no client-side hashing needed.
-              {draft.startMining && ' After deploy, mining will embed the genesis into the next parent block.'}
-            </div>
+            <label className="flex items-center gap-2 cursor-pointer mb-4">
+              <input
+                type="checkbox"
+                checked={draft.startMining}
+                onChange={e => update({ startMining: e.target.checked })}
+                className="accent-lattice-500"
+              />
+              <span className="text-sm text-zinc-300">Start mining after deploy</span>
+            </label>
             <button
               onClick={handleMint}
               disabled={errors.length > 0 || deploying}
